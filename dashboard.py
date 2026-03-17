@@ -68,7 +68,6 @@ def load_and_prepare():
     ref = pd.Timestamp("2019-03-01")
     df["Age"]               = (ref - df["DOB"]).dt.days // 365
     df["Tenure"]            = (ref - df["DateofHire"]).dt.days // 365
-    df["DaysSinceLastReview"] = (ref - df["LastPerformanceReview_Date"]).dt.days
     df["ManagerID"]         = df["ManagerID"].fillna(df["ManagerID"].median())
     df["AbsenteeismRate"]   = df["Absences"] / df["Tenure"].clip(lower=1)
     df["RiskScore_Engagement"] = df["DaysLateLast30"] * 2 + df["Absences"]
@@ -144,7 +143,7 @@ def train_model(X_hash: str):
 
     # ── SHAP (sur le RF de base) ──────────────────────────────
     explainer   = shap.TreeExplainer(rf, X_train_sc)
-    shap_values = explainer.shap_values(X_test_sc)
+    shap_values = explainer.shap_values(X_test_sc, check_additivity=False)
     if isinstance(shap_values, list):
         sv_class1 = shap_values[1]
     elif shap_values.ndim == 3:
@@ -244,47 +243,92 @@ def build_feature_vector(
     inputs: dict, feature_names: list, scaler: StandardScaler, _unused=None
 ) -> pd.DataFrame:
     """Construit le vecteur de features normalisé à partir des inputs formulaire."""
-    row = pd.Series(scaler.mean_, index=feature_names)
+    row = pd.Series(0.0, index=feature_names)
 
+    # --- Mapping PerformanceScore texte → PerfScoreID numérique ---
+    perf_map = {"Exceeds": 4, "Fully Meets": 3, "Needs Improvement": 2, "PIP": 1}
+    perf_text = inputs.get("PerformanceScore", "Fully Meets")
+    perf_id = perf_map.get(perf_text, 3)
+
+    # --- Mapping MaritalDesc → MaritalStatusID ---
+    marital_map = {"Single": 0, "Married": 1, "Divorced": 2, "Separated": 3, "Widowed": 4}
+    married = inputs.get("Married", False)
+    marital_status_id = 1 if married else 0
+
+    # --- Mapping Department → DeptID ---
+    dept_map = {
+        "Admin Offices": 1, "Executive Office": 2, "IT/IS": 3,
+        "Production": 5, "Sales": 4, "Software Engineering": 6,
+    }
+    dept_text = inputs.get("Department", "Production")
+    dept_id = dept_map.get(dept_text, 5)
+
+    tenure = inputs.get("Tenure", 5)
+    tenure_safe = max(tenure, 1)
+    absences = inputs.get("Absences", 10)
+    days_late = inputs.get("DaysLateLast30", 0)
+
+    # --- Variables numériques ---
     numeric_map = {
         "Salary":                inputs.get("Salary", 62000),
         "Age":                   inputs.get("Age", 35),
-        "Tenure":                inputs.get("Tenure", 5),
+        "Tenure":                tenure,
         "EngagementSurvey":      inputs.get("EngagementSurvey", 4.0),
         "EmpSatisfaction":       inputs.get("EmpSatisfaction", 3),
-        "Absences":              inputs.get("Absences", 10),
-        "DaysLateLast30":        inputs.get("DaysLateLast30", 0),
+        "Absences":              absences,
+        "DaysLateLast30":        days_late,
         "SpecialProjectsCount":  inputs.get("SpecialProjectsCount", 0),
         "GenderID":              1 if inputs.get("Sex", "M") == "M" else 0,
-        "MarriedID":             int(inputs.get("Married", False)),
+        "MarriedID":             int(married),
         "FromDiversityJobFairID": int(inputs.get("DiversityHire", False)),
+        "PerfScoreID":           perf_id,
+        "MaritalStatusID":       marital_status_id,
+        "DeptID":                dept_id,
+        "PositionID":            19,  # valeur médiane
+        "ManagerID":             14,  # valeur médiane
+        "AbsenteeismRate":       absences / tenure_safe,
+        "RiskScore_Engagement":  days_late * 2 + absences,
     }
-    tenure_safe = max(inputs.get("Tenure", 1), 1)
-    numeric_map["AbsenteeismRate"]      = inputs.get("Absences", 10) / tenure_safe
-    numeric_map["RiskScore_Engagement"] = (
-        inputs.get("DaysLateLast30", 0) * 2 + inputs.get("Absences", 10)
-    )
-    numeric_map["DaysSinceLastReview"]  = inputs.get("DaysSinceLastReview", 365)
-
     for col, val in numeric_map.items():
         if col in row.index:
             row[col] = val
 
-    for prefix in ["Department", "Position", "State", "Sex", "MaritalDesc",
-                   "CitizenDesc", "HispanicLatino", "RaceDesc",
-                   "RecruitmentSource", "PerformanceScore"]:
-        for c in [c for c in feature_names if c.startswith(f"{prefix}_")]:
-            row[c] = 0
+    # --- Variables catégorielles (one-hot) : tout à 0 d'abord ---
+    ohe_prefixes = [
+        "Department", "Position", "State", "Sex", "MaritalDesc",
+        "CitizenDesc", "HispanicLatino", "RaceDesc",
+        "RecruitmentSource", "PerformanceScore",
+    ]
 
-    for prefix, key in [
-        ("Department",        "Department"),
-        ("PerformanceScore",  "PerformanceScore"),
-        ("RecruitmentSource", "RecruitmentSource"),
-        ("Sex",               "Sex"),
-    ]:
-        col = f"{prefix}_{inputs.get(key, '')}"
+    # --- Activer les bonnes colonnes OHE ---
+    ohe_mappings = {
+        "Department":        inputs.get("Department", "Production"),
+        "PerformanceScore":  perf_text,
+        "RecruitmentSource": inputs.get("RecruitmentSource", "Indeed"),
+        "Sex":               inputs.get("Sex", "M"),
+    }
+    for prefix, value in ohe_mappings.items():
+        col = f"{prefix}_{value}"
         if col in row.index:
             row[col] = 1
+
+    # MaritalDesc
+    marital_text = "Married" if married else "Single"
+    col = f"MaritalDesc_{marital_text}"
+    if col in row.index:
+        row[col] = 1
+
+    # CitizenDesc — défaut US Citizen
+    if "CitizenDesc_US Citizen" in row.index:
+        row["CitizenDesc_US Citizen"] = 1
+
+    # HispanicLatino — défaut no
+    if "HispanicLatino_no" in row.index:
+        row["HispanicLatino_no"] = 1
+
+    # RaceDesc — défaut White (valeur la plus fréquente)
+    if "RaceDesc_White" in row.index:
+        row["RaceDesc_White"] = 1
 
     return pd.DataFrame(scaler.transform(row.to_frame().T), columns=feature_names)
 
@@ -519,7 +563,6 @@ def tab_prediction(results: dict):
             "Absences":             absences,
             "DaysLateLast30":       days_late,
             "SpecialProjectsCount": special_proj,
-            "DaysSinceLastReview":  365,
         }
         X_row = build_feature_vector(
             inputs, results["feature_names"], results["scaler"]
@@ -585,7 +628,7 @@ def tab_prediction(results: dict):
     # ── Explication SHAP individuelle ────────────────────────
     st.subheader("Facteurs determinants — Explication SHAP")
     try:
-        shap_row = results["explainer"].shap_values(X_row)
+        shap_row = results["explainer"].shap_values(X_row, check_additivity=False)
         if isinstance(shap_row, list):
             sv_row = shap_row[1][0]
         elif shap_row.ndim == 3:
