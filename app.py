@@ -1,24 +1,18 @@
 # -*- coding: utf-8 -*-
-"""
-App Streamlit pour HR Turnover Predictor
-Lancez avec :
-    streamlit run app.py
-"""
 
 import os
 import warnings
-from pathlib import Path
 
 import joblib
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib.ticker as mticker
 import seaborn as sns
 import shap
 import streamlit as st
 
 warnings.filterwarnings("ignore")
+
 
 # ─────────────────────────────────────────────
 # CONFIG
@@ -27,18 +21,93 @@ warnings.filterwarnings("ignore")
 st.set_page_config(
     page_title="HR Turnover Predictor",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 DATA_PATH = "HRDataset_v14.csv"
 MODELS_DIR = "models"
-PLOTS_DIR = "plots"
 
 CLR_HIGH = "#C62828"
 CLR_MED = "#E65100"
 CLR_LOW = "#2E7D32"
 CLR_PRIMARY = "#1565C0"
-CLR_SECONDARY = "#37474F"
+CLR_TEXT = "#101828"
+CLR_MUTED = "#667085"
+
+
+# ─────────────────────────────────────────────
+# STYLE
+# ─────────────────────────────────────────────
+
+st.markdown(
+    """
+    <style>
+    .main {
+        background-color: #F8FAFC;
+    }
+    .block-container {
+        padding-top: 1.2rem;
+        padding-bottom: 1rem;
+        max-width: 1300px;
+    }
+    .soft-card {
+        background: white;
+        border-radius: 16px;
+        padding: 1rem 1.1rem;
+        border: 1px solid #E6EAF0;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        margin-bottom: 0.8rem;
+        color: #101828;
+    }
+    .risk-card {
+        border-radius: 18px;
+        padding: 1.1rem 1.2rem;
+        color: white;
+        margin-bottom: 0.8rem;
+    }
+    .action-card {
+        background: white;
+        border-radius: 16px;
+        padding: 1rem 1.1rem;
+        border: 1px solid #E6EAF0;
+        border-left: 6px solid #1565C0;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        margin-bottom: 0.8rem;
+        color: #101828;
+    }
+    .section-title {
+        font-size: 1.05rem;
+        font-weight: 700;
+        margin-bottom: 0.4rem;
+        color: #101828;
+    }
+    .small-muted {
+        color: #667085;
+        font-size: 0.92rem;
+    }
+    .metric-title {
+        color: #667085;
+        font-size: 0.85rem;
+        margin-bottom: 0.2rem;
+    }
+    .metric-value {
+        font-size: 1.35rem;
+        font-weight: 700;
+        color: #101828;
+    }
+    .pill {
+        display: inline-block;
+        padding: 0.25rem 0.6rem;
+        border-radius: 999px;
+        font-size: 0.82rem;
+        font-weight: 600;
+        margin-right: 0.35rem;
+        margin-bottom: 0.35rem;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 
 # ─────────────────────────────────────────────
@@ -47,10 +116,10 @@ CLR_SECONDARY = "#37474F"
 
 def risk_label(prob: float) -> str:
     if prob >= 0.70:
-        return "RISQUE ÉLEVÉ"
+        return "Risque élevé"
     if prob >= 0.40:
-        return "RISQUE MODÉRÉ"
-    return "RISQUE FAIBLE"
+        return "Risque modéré"
+    return "Risque faible"
 
 
 def risk_color(prob: float) -> str:
@@ -75,25 +144,23 @@ def contains_any(text: str, keywords: list[str]) -> int:
     return int(any(k in text for k in keywords))
 
 
-def empirical_percentile(value: float, values: np.ndarray) -> float:
-    if values is None or len(values) == 0:
-        return 0.5
-    return float((values <= value).mean())
+def render_metric_card(title: str, value: str):
+    st.markdown(
+        f"""
+        <div class="soft-card">
+            <div class="metric-title">{title}</div>
+            <div class="metric-value">{value}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
-def safe_mode(series: pd.Series):
-    mode = series.mode(dropna=True)
-    return mode.iloc[0] if not mode.empty else None
-
-
-def build_mapping(df: pd.DataFrame, key_col: str, value_col: str) -> dict:
-    if key_col not in df.columns or value_col not in df.columns:
-        return {}
-    tmp = df[[key_col, value_col]].dropna()
-    if tmp.empty:
-        return {}
-    grouped = tmp.groupby(key_col)[value_col].agg(safe_mode)
-    return grouped.to_dict()
+def render_pill(text: str, bg: str, color: str = "#101828"):
+    st.markdown(
+        f"""<span class="pill" style="background:{bg}; color:{color};">{text}</span>""",
+        unsafe_allow_html=True,
+    )
 
 
 # ─────────────────────────────────────────────
@@ -108,203 +175,206 @@ def load_artifacts():
     return best_model, feature_names, results
 
 
-@st.cache_data
-def load_reference_data():
-    if not os.path.exists(DATA_PATH):
-        return None, {}
+def enrich_with_nlp(X: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    X_nlp = X.copy()
 
-    df = pd.read_csv(DATA_PATH)
-
-    for col in df.select_dtypes(include="object").columns:
-        df[col] = df[col].astype(str).str.strip()
-
-    if "ManagerID" in df.columns:
-        df["ManagerID"] = df["ManagerID"].fillna(df["ManagerID"].median())
-
-    if "DOB" in df.columns:
-        df["DOB"] = pd.to_datetime(df["DOB"], dayfirst=False, errors="coerce")
-    if "DateofHire" in df.columns:
-        df["DateofHire"] = pd.to_datetime(df["DateofHire"], dayfirst=False, errors="coerce")
-
-    ref_date = pd.Timestamp("2019-03-01")
-    if "DOB" in df.columns:
-        df["Age"] = (ref_date - df["DOB"]).dt.days // 365
-    if "DateofHire" in df.columns:
-        df["Tenure"] = (ref_date - df["DateofHire"]).dt.days // 365
-
-    stats = {
-        "salary_values": np.sort(df["Salary"].dropna().values) if "Salary" in df.columns else np.array([]),
-        "engagement_median": float(df["EngagementSurvey"].median()) if "EngagementSurvey" in df.columns else 4.0,
-        "absence_q75": float(df["Absences"].quantile(0.75)) if "Absences" in df.columns else 10.0,
-        "tenure_median": float(df["Tenure"].median()) if "Tenure" in df.columns else 5.0,
-        "projects_median": float(df["SpecialProjectsCount"].median()) if "SpecialProjectsCount" in df.columns else 0.0,
-        "perf_median": float(df["PerfScoreID"].median()) if "PerfScoreID" in df.columns else 3.0,
-        "manager_default": float(df["ManagerID"].median()) if "ManagerID" in df.columns else 15.0,
-        "deptid_map": build_mapping(df, "Department", "DeptID"),
-        "positionid_map": build_mapping(df, "Position", "PositionID"),
-        "genderid_map": build_mapping(df, "Sex", "GenderID"),
-        "perf_map": build_mapping(df, "PerformanceScore", "PerfScoreID"),
-        "maritalstatus_map": build_mapping(df, "MaritalDesc", "MaritalStatusID"),
-        "options": {}
-    }
-
-    option_cols = [
-        "Department", "Position", "State", "Sex", "MaritalDesc",
-        "CitizenDesc", "HispanicLatino", "RaceDesc", "RecruitmentSource",
-        "PerformanceScore"
-    ]
-    for col in option_cols:
-        stats["options"][col] = sorted(df[col].dropna().astype(str).unique().tolist()) if col in df.columns else []
-
-    if "ManagerID" in df.columns:
-        managers = sorted(pd.Series(df["ManagerID"].dropna().unique()).astype(int).tolist())
+    if "Salary" in X_nlp.columns:
+        X_nlp["Salary"] = pd.to_numeric(X_nlp["Salary"], errors="coerce")
+        X_nlp["salary_pct"] = X_nlp["Salary"].rank(pct=True)
     else:
-        managers = [15]
-    stats["options"]["ManagerID"] = managers
+        X_nlp["salary_pct"] = 0.5
 
-    return df, stats
+    if "EngagementSurvey" in X_nlp.columns:
+        X_nlp["EngagementSurvey"] = pd.to_numeric(X_nlp["EngagementSurvey"], errors="coerce")
+        X_nlp["low_engagement_flag"] = (X_nlp["EngagementSurvey"] < X_nlp["EngagementSurvey"].median()).astype(int)
+    else:
+        X_nlp["low_engagement_flag"] = 0
 
+    if "Absences" in X_nlp.columns:
+        X_nlp["Absences"] = pd.to_numeric(X_nlp["Absences"], errors="coerce")
+        X_nlp["high_absence_flag"] = (X_nlp["Absences"] >= X_nlp["Absences"].quantile(0.75)).astype(int)
+    else:
+        X_nlp["high_absence_flag"] = 0
 
-def build_feature_vector(inputs: dict, feature_names: list[str], results: dict, ref_stats: dict) -> pd.DataFrame:
-    base_means = results["X_train"].mean(numeric_only=True).reindex(feature_names, fill_value=0.0)
-    row = pd.Series(base_means, index=feature_names, dtype=float)
+    if "Tenure" in X_nlp.columns:
+        X_nlp["Tenure"] = pd.to_numeric(X_nlp["Tenure"], errors="coerce")
+        X_nlp["high_tenure_flag"] = (X_nlp["Tenure"] >= X_nlp["Tenure"].median()).astype(int)
+    else:
+        X_nlp["high_tenure_flag"] = 0
 
-    for prefix in [
-        "Department", "Position", "State", "Sex", "MaritalDesc",
-        "CitizenDesc", "HispanicLatino", "RaceDesc",
-        "RecruitmentSource", "PerformanceScore"
-    ]:
-        prefixed_cols = [c for c in feature_names if c.startswith(f"{prefix}_")]
-        for c in prefixed_cols:
-            row[c] = 0.0
+    if "SpecialProjectsCount" in X_nlp.columns:
+        X_nlp["SpecialProjectsCount"] = pd.to_numeric(X_nlp["SpecialProjectsCount"], errors="coerce")
+        X_nlp["low_projects_flag"] = (X_nlp["SpecialProjectsCount"] <= X_nlp["SpecialProjectsCount"].median()).astype(int)
+    else:
+        X_nlp["low_projects_flag"] = 0
 
-    perf_map_fallback = {
-        "PIP": 1,
-        "Needs Improvement": 2,
-        "Fully Meets": 3,
-        "Exceeds": 4,
-    }
+    perf_col = None
+    for c in ["PerfScoreID", "PerformanceScore"]:
+        if c in X_nlp.columns:
+            perf_col = c
+            break
 
-    gender_map = ref_stats.get("genderid_map", {})
-    perf_map = ref_stats.get("perf_map", {})
-    maritalstatus_map = ref_stats.get("maritalstatus_map", {})
-    deptid_map = ref_stats.get("deptid_map", {})
-    positionid_map = ref_stats.get("positionid_map", {})
+    if perf_col is not None:
+        X_nlp[perf_col] = pd.to_numeric(X_nlp[perf_col], errors="coerce")
+        X_nlp["high_perf_flag"] = (X_nlp[perf_col] >= X_nlp[perf_col].median()).astype(int)
+    else:
+        X_nlp["high_perf_flag"] = 0
 
-    salary = float(inputs.get("Salary", row.get("Salary", 62000)))
-    age = float(inputs.get("Age", row.get("Age", 35)))
-    tenure = float(inputs.get("Tenure", row.get("Tenure", 5)))
-    engagement = float(inputs.get("EngagementSurvey", row.get("EngagementSurvey", 4.0)))
-    satisfaction = float(inputs.get("EmpSatisfaction", row.get("EmpSatisfaction", 3)))
-    absences = float(inputs.get("Absences", row.get("Absences", 10)))
-    days_late = float(inputs.get("DaysLateLast30", row.get("DaysLateLast30", 0)))
-    special_projects = float(inputs.get("SpecialProjectsCount", row.get("SpecialProjectsCount", 0)))
-    manager_id = float(inputs.get("ManagerID", ref_stats.get("manager_default", row.get("ManagerID", 15))))
-    sex = str(inputs.get("Sex", "M"))
-    married = bool(inputs.get("Married", False))
-    diversity_hire = bool(inputs.get("DiversityHire", False))
-    department = str(inputs.get("Department", "Production"))
-    position = str(inputs.get("Position", "Production Technician I"))
-    state = str(inputs.get("State", "MA"))
-    marital_desc = str(inputs.get("MaritalDesc", "Single"))
-    citizen_desc = str(inputs.get("CitizenDesc", "US Citizen"))
-    hispanic = str(inputs.get("HispanicLatino", "No"))
-    race = str(inputs.get("RaceDesc", "White"))
-    recruit_src = str(inputs.get("RecruitmentSource", "Indeed"))
-    perf_label = str(inputs.get("PerformanceScore", "Fully Meets"))
+    X_nlp["low_salary_flag"] = (X_nlp["salary_pct"] <= 0.35).astype(int)
 
-    perf_id = perf_map.get(perf_label, perf_map_fallback.get(perf_label, row.get("PerfScoreID", 3)))
-    gender_id = gender_map.get(sex, 1 if sex == "M" else 0)
-    marital_status_id = maritalstatus_map.get(marital_desc, row.get("MaritalStatusID", 1))
-    dept_id = deptid_map.get(department, row.get("DeptID", 5))
-    position_id = positionid_map.get(position, row.get("PositionID", 19))
+    positive_survey = [
+        "I appreciate the team environment and my responsibilities are clear. I feel stable in my current role.",
+        "My work environment is positive and I value the collaboration within the team. I would like to continue developing my skills.",
+        "I am generally satisfied with my role and the organization. Communication and expectations are mostly clear."
+    ]
+    growth_survey = [
+        "My current role is stable overall, but I would like more clarity on future opportunities and development.",
+        "I would appreciate better visibility on progression and responsibilities.",
+        "I think there is room to improve communication about career development."
+    ]
+    salary_survey = [
+        "I feel my compensation and career progression are not fully aligned with my contribution.",
+        "I would like more visibility on salary progression and future growth.",
+        "My responsibilities have grown, but recognition and progression do not seem to have followed at the same pace."
+    ]
+    stress_survey = [
+        "My workload has become difficult to manage consistently and I would appreciate more support.",
+        "I have experienced pressure in my day-to-day work and I would like better balance.",
+        "The current pace is sometimes hard to sustain and I would value workload adjustments."
+    ]
+    transfer_growth = [
+        "I would like to explore an internal move to a role with more responsibility and clearer growth prospects.",
+        "I am interested in internal mobility because I would like broader responsibilities and a stronger development path.",
+        "I would appreciate discussing a transfer opportunity to continue progressing within the company."
+    ]
+    transfer_fit = [
+        "I would like to discuss a move to another team where my skills could be better used.",
+        "I am interested in an internal transfer to a role that better matches my professional objectives.",
+        "I would like to explore internal mobility toward a position with a stronger fit for my experience."
+    ]
 
-    numeric_map = {
-        "Salary": salary,
-        "Age": age,
-        "Tenure": tenure,
-        "EngagementSurvey": engagement,
-        "EmpSatisfaction": satisfaction,
-        "Absences": absences,
-        "DaysLateLast30": days_late,
-        "SpecialProjectsCount": special_projects,
-        "ManagerID": manager_id,
-        "GenderID": gender_id,
-        "MarriedID": int(married),
-        "FromDiversityJobFairID": int(diversity_hire),
-        "PerfScoreID": perf_id,
-        "MaritalStatusID": marital_status_id,
-        "DeptID": dept_id,
-        "PositionID": position_id,
-    }
+    rng = np.random.default_rng(42)
 
-    for col, val in numeric_map.items():
-        if col in row.index:
-            row[col] = float(val)
+    def choose(lst):
+        return lst[rng.integers(0, len(lst))]
 
-    for prefix, value in [
-        ("Department", department),
-        ("Position", position),
-        ("State", state),
-        ("Sex", sex),
-        ("MaritalDesc", marital_desc),
-        ("CitizenDesc", citizen_desc),
-        ("HispanicLatino", hispanic),
-        ("RaceDesc", race),
-        ("RecruitmentSource", recruit_src),
-        ("PerformanceScore", perf_label),
-    ]:
-        col = f"{prefix}_{value}"
-        if col in row.index:
-            row[col] = 1.0
+    def generate_survey(row):
+        if row["low_salary_flag"] == 1 and row["high_perf_flag"] == 1:
+            return choose(salary_survey)
+        if row["high_absence_flag"] == 1 and row["low_engagement_flag"] == 1:
+            return choose(stress_survey)
+        if row["high_tenure_flag"] == 1 and row["low_projects_flag"] == 1:
+            return choose(growth_survey)
+        if row["low_engagement_flag"] == 1:
+            return choose(growth_survey)
+        return choose(positive_survey)
 
-    tenure_safe = max(tenure, 1.0)
-    if "AbsenteeismRate" in row.index:
-        row["AbsenteeismRate"] = absences / tenure_safe
-    if "RiskScore_Engagement" in row.index:
-        row["RiskScore_Engagement"] = days_late * 2 + absences
+    def generate_transfer(row):
+        score = (
+            0.35 * row["low_salary_flag"] +
+            0.25 * row["high_perf_flag"] +
+            0.20 * row["high_tenure_flag"] +
+            0.20 * row["low_engagement_flag"]
+        )
+        if rng.random() > score:
+            return ""
+        if row["high_tenure_flag"] == 1 or row["low_projects_flag"] == 1:
+            return choose(transfer_growth)
+        return choose(transfer_fit)
 
-    salary_pct = empirical_percentile(salary, ref_stats.get("salary_values", np.array([])))
-    low_engagement_flag = int(engagement < ref_stats.get("engagement_median", 4.0))
-    high_absence_flag = int(absences >= ref_stats.get("absence_q75", 10.0))
-    high_tenure_flag = int(tenure >= ref_stats.get("tenure_median", 5.0))
-    low_projects_flag = int(special_projects <= ref_stats.get("projects_median", 0.0))
-    high_perf_flag = int(perf_id >= ref_stats.get("perf_median", 3.0))
-    low_salary_flag = int(salary_pct <= 0.35)
-
-    survey_comment = str(inputs.get("survey_comment", "")).strip()
-    transfer_request_text = str(inputs.get("transfer_request_text", "")).strip()
-    combined_text = f"{survey_comment} {transfer_request_text}".strip()
+    demo_text_df = pd.DataFrame(index=X_nlp.index)
+    demo_text_df["survey_comment"] = X_nlp.apply(generate_survey, axis=1)
+    demo_text_df["transfer_request_text"] = X_nlp.apply(generate_transfer, axis=1)
 
     salary_keywords = ["compensation", "salary", "recognition", "progression"]
     growth_keywords = ["growth", "development", "career", "progressing", "opportunities", "responsibility"]
     stress_keywords = ["workload", "pressure", "support", "balance", "pace"]
     mobility_keywords = ["internal move", "internal mobility", "transfer", "another team", "another role"]
 
-    derived_map = {
-        "salary_pct": salary_pct,
-        "low_engagement_flag": low_engagement_flag,
-        "high_absence_flag": high_absence_flag,
-        "high_tenure_flag": high_tenure_flag,
-        "low_projects_flag": low_projects_flag,
-        "high_perf_flag": high_perf_flag,
-        "low_salary_flag": low_salary_flag,
-        "text_sentiment_score": sentiment_score(combined_text),
-        "topic_salary": contains_any(combined_text, salary_keywords),
-        "topic_growth": contains_any(combined_text, growth_keywords),
-        "topic_stress": contains_any(combined_text, stress_keywords),
-        "topic_mobility": contains_any(combined_text, mobility_keywords),
-        "negative_text_flag": int(sentiment_score(combined_text) < 0),
-        "mobility_request_present": int(len(transfer_request_text) > 10),
-    }
+    text_combined = (
+        demo_text_df["survey_comment"].fillna("") + " " + demo_text_df["transfer_request_text"].fillna("")
+    ).str.strip()
 
-    for col, val in derived_map.items():
-        if col in row.index:
-            row[col] = float(val)
+    X_nlp["text_sentiment_score"] = text_combined.apply(sentiment_score)
+    X_nlp["topic_salary"] = text_combined.apply(lambda x: contains_any(x, salary_keywords))
+    X_nlp["topic_growth"] = text_combined.apply(lambda x: contains_any(x, growth_keywords))
+    X_nlp["topic_stress"] = text_combined.apply(lambda x: contains_any(x, stress_keywords))
+    X_nlp["topic_mobility"] = text_combined.apply(lambda x: contains_any(x, mobility_keywords))
+    X_nlp["negative_text_flag"] = (X_nlp["text_sentiment_score"] < 0).astype(int)
+    X_nlp["mobility_request_present"] = demo_text_df["transfer_request_text"].fillna("").str.len().gt(10).astype(int)
 
-    row = row.fillna(0.0)
-    return pd.DataFrame([row], columns=feature_names)
+    return X_nlp, demo_text_df
 
+
+@st.cache_data
+def load_and_prepare_data(feature_names: tuple):
+    df_raw = pd.read_csv(DATA_PATH)
+
+    for col in df_raw.select_dtypes(include="object").columns:
+        df_raw[col] = df_raw[col].astype(str).str.strip()
+
+    df = df_raw.copy()
+
+    df["DOB"] = pd.to_datetime(df["DOB"], dayfirst=False, errors="coerce")
+    df["DateofHire"] = pd.to_datetime(df["DateofHire"], dayfirst=False, errors="coerce")
+    df["LastPerformanceReview_Date"] = pd.to_datetime(
+        df["LastPerformanceReview_Date"], dayfirst=False, errors="coerce"
+    )
+
+    ref_date = pd.Timestamp("2019-03-01")
+    df["Age"] = (ref_date - df["DOB"]).dt.days // 365
+    df["Tenure"] = (ref_date - df["DateofHire"]).dt.days // 365
+    df["DaysSinceLastReview"] = (ref_date - df["LastPerformanceReview_Date"]).dt.days
+    df["ManagerID"] = df["ManagerID"].fillna(df["ManagerID"].median())
+
+    meta_cols = [
+        "EmpID", "Department", "Position", "ManagerID", "Salary", "Age", "Tenure",
+        "EngagementSurvey", "EmpSatisfaction", "Absences", "DaysLateLast30",
+        "SpecialProjectsCount", "RecruitmentSource", "PerformanceScore", "State",
+        "Sex", "MaritalDesc", "CitizenDesc", "HispanicLatino", "RaceDesc", "Termd"
+    ]
+    meta_df = df[[c for c in meta_cols if c in df.columns]].copy()
+
+    pii_cols = [
+        "Employee_Name", "EmpID", "Zip", "ManagerName",
+        "DOB", "DateofHire", "LastPerformanceReview_Date"
+    ]
+    leaky_cols = [
+        "TermReason", "EmploymentStatus", "EmpStatusID", "DateofTermination"
+    ]
+
+    df_model = df.drop(columns=pii_cols + leaky_cols, errors="ignore")
+
+    y = df_model["Termd"].copy()
+    X = df_model.drop(columns=["Termd"], errors="ignore")
+    X = X.drop(columns=["DaysSinceLastReview"], errors="ignore")
+
+    cat_cols = X.select_dtypes(include=["object"]).columns.tolist()
+    X = pd.get_dummies(X, columns=cat_cols, drop_first=True)
+
+    bool_cols = X.select_dtypes(include=["bool"]).columns
+    X[bool_cols] = X[bool_cols].astype(int)
+
+    X, demo_text_df = enrich_with_nlp(X)
+
+    if "Absences" in X.columns and "Tenure" in X.columns:
+        tenure_safe = X["Tenure"].clip(lower=1)
+        X["AbsenteeismRate"] = X["Absences"] / tenure_safe
+
+    if "DaysLateLast30" in X.columns and "Absences" in X.columns:
+        X["RiskScore_Engagement"] = X["DaysLateLast30"] * 2 + X["Absences"]
+
+    X = X.reindex(columns=list(feature_names), fill_value=0)
+
+    meta_df = meta_df.join(demo_text_df)
+    meta_df["EmpID"] = pd.to_numeric(meta_df["EmpID"], errors="coerce").astype("Int64")
+
+    return meta_df, X, y
+
+
+# ─────────────────────────────────────────────
+# SHAP
+# ─────────────────────────────────────────────
 
 def get_individual_shap(results: dict, X_row: pd.DataFrame):
     try_order = []
@@ -335,377 +405,281 @@ def get_individual_shap(results: dict, X_row: pd.DataFrame):
                 base_val = expected_value
 
             model_name = "Random Forest" if model_key == "rf" else "XGBoost"
-            return explainer, sv_row, base_val, model_name
+            return sv_row, base_val, model_name
         except Exception:
             continue
 
-    return None, None, None, None
+    return None, None, None
 
 
 # ─────────────────────────────────────────────
-# SIDEBAR
+# RECOMMANDATIONS
 # ─────────────────────────────────────────────
 
-def render_sidebar(raw_df: pd.DataFrame | None, results: dict):
-    st.sidebar.title("HR Turnover Predictor")
-    st.sidebar.caption("Dashboard connecté aux artefacts de hr_pipeline.py")
-    st.sidebar.markdown("---")
+def generate_retention_recommendations(x_row: pd.Series, shap_df: pd.DataFrame) -> list[str]:
+    recs = []
 
-    if raw_df is not None and "Termd" in raw_df.columns:
-        total = len(raw_df)
-        departures = int(raw_df["Termd"].sum())
-        st.sidebar.metric("Employés analysés", total)
-        st.sidebar.metric("Taux de départ", f"{departures / total * 100:.1f} %")
+    def positive(feature: str) -> bool:
+        return not shap_df[(shap_df["Variable"] == feature) & (shap_df["SHAP"] > 0)].empty
 
+    if x_row.get("low_salary_flag", 0) == 1 or x_row.get("topic_salary", 0) == 1:
+        recs.append("Lancer une revue de rémunération ou clarifier rapidement la trajectoire d'évolution salariale.")
+
+    if x_row.get("topic_growth", 0) == 1 or (x_row.get("high_tenure_flag", 0) == 1 and x_row.get("low_projects_flag", 0) == 1):
+        recs.append("Prévoir un entretien de carrière pour clarifier les perspectives d'évolution, la montée en responsabilité et les prochaines étapes.")
+
+    if x_row.get("topic_stress", 0) == 1 or x_row.get("high_absence_flag", 0) == 1 or positive("AbsenteeismRate"):
+        recs.append("Vérifier la charge de travail et mettre en place un plan de soutien managérial ou un ajustement court terme.")
+
+    if x_row.get("topic_mobility", 0) == 1 or x_row.get("mobility_request_present", 0) == 1:
+        recs.append("Explorer une mobilité interne ou un changement de périmètre afin de retenir le collaborateur dans l'entreprise.")
+
+    if x_row.get("low_engagement_flag", 0) == 1 or x_row.get("text_sentiment_score", 0) < 0:
+        recs.append("Organiser rapidement un point RH avec le manager pour identifier les irritants concrets et sécuriser un plan d'action.")
+
+    if positive("ManagerID"):
+        recs.append("Analyser le contexte managérial de l'équipe et renforcer le suivi du collaborateur à court terme.")
+
+    if not recs:
+        recs.append("Maintenir un suivi régulier, avec feedback managérial, reconnaissance et échange de carrière.")
+
+    return recs[:4]
+
+
+def build_executive_summary(prob: float, top_pos: pd.DataFrame, top_neg: pd.DataFrame) -> str:
+    pos_feats = top_pos["Variable"].head(3).tolist()
+    neg_feats = top_neg["Variable"].head(2).tolist()
+
+    pos_txt = ", ".join(pos_feats) if pos_feats else "aucun facteur dominant"
+    neg_txt = ", ".join(neg_feats) if neg_feats else "peu de facteurs protecteurs visibles"
+
+    return (
+        f"Le modèle estime un {risk_label(prob).lower()} de départ. "
+        f"Les facteurs qui augmentent le plus ce risque sont : {pos_txt}. "
+        f"Les éléments qui jouent plutôt en faveur de la rétention sont : {neg_txt}."
+    )
+
+
+# ─────────────────────────────────────────────
+# INTERFACE
+# ─────────────────────────────────────────────
+
+def render_header(results: dict):
     best_key = results["best_key"]
-    st.sidebar.metric("Modèle retenu", results["best_name"])
-    st.sidebar.metric("AUC", f"{results[best_key]['auc']:.3f}")
-    st.sidebar.metric("F1 Démission", f"{results[best_key]['f1']:.3f}")
-    st.sidebar.metric("Recall Démission", f"{results[best_key]['recall']:.3f}")
-    st.sidebar.metric("Precision Démission", f"{results[best_key]['precision']:.3f}")
-    st.sidebar.metric("Seuil", f"{results[best_key]['threshold']:.2f}")
 
-    st.sidebar.markdown("---")
-    st.sidebar.caption("Conformité RGPD : PII supprimées, variables de fuite retirées.")
-
-
-# ─────────────────────────────────────────────
-# ONGLET 1 — VUE GLOBALE
-# ─────────────────────────────────────────────
-
-def tab_overview(raw_df: pd.DataFrame | None, results: dict):
-    st.header("Vue globale")
-
-    best_key = results["best_key"]
-    metrics = results[best_key]
+    st.title("HR Turnover Predictor")
+    st.caption("Fiche employé et analyse IA pour la rétention RH")
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Modèle", results["best_name"])
-    c2.metric("AUC", f"{metrics['auc']:.3f}")
-    c3.metric("F1 Démission", f"{metrics['f1']:.3f}")
-    c4.metric("Recall Démission", f"{metrics['recall']:.3f}")
-
-    if raw_df is not None:
-        df = raw_df.copy()
-        for c in df.select_dtypes(include="object").columns:
-            df[c] = df[c].astype(str).str.strip()
-
-        st.markdown("---")
-        left, right = st.columns(2)
-
-        with left:
-            if "Department" in df.columns and "Termd" in df.columns:
-                st.subheader("Taux de départ par département")
-                dept = df.groupby("Department")["Termd"].agg(["sum", "count"])
-                dept["rate"] = dept["sum"] / dept["count"] * 100
-                dept = dept.sort_values("rate")
-
-                fig, ax = plt.subplots(figsize=(7, 4))
-                colors = [CLR_HIGH if r > 40 else CLR_MED if r > 20 else CLR_LOW for r in dept["rate"]]
-                dept["rate"].plot(kind="barh", ax=ax, color=colors)
-                for i, v in enumerate(dept["rate"]):
-                    ax.text(v + 0.3, i, f"{v:.1f}%", va="center", fontsize=9)
-                ax.set_xlabel("Taux de départ (%)")
-                ax.set_title("Taux de départ par département")
-                sns.despine(ax=ax)
-                plt.tight_layout()
-                st.pyplot(fig)
-                plt.close()
-
-        with right:
-            if "EmpSatisfaction" in df.columns and "Termd" in df.columns:
-                st.subheader("Satisfaction selon le statut")
-                df["Statut"] = df["Termd"].map({0: "Actif", 1: "Départ confirmé"})
-                fig, ax = plt.subplots(figsize=(7, 4))
-                sns.violinplot(
-                    data=df, x="Statut", y="EmpSatisfaction",
-                    palette={"Actif": CLR_LOW, "Départ confirmé": CLR_HIGH}, ax=ax
-                )
-                ax.set_xlabel("")
-                ax.set_title("Distribution de satisfaction")
-                sns.despine(ax=ax)
-                plt.tight_layout()
-                st.pyplot(fig)
-                plt.close()
-
-    st.markdown("---")
-    col_a, col_b = st.columns(2)
-
-    with col_a:
-        roc_path = os.path.join(PLOTS_DIR, "06_roc_curves.png")
-        if os.path.exists(roc_path):
-            st.subheader("Courbes ROC")
-            st.image(roc_path, use_container_width=True)
-
-    with col_b:
-        fi_path = os.path.join(PLOTS_DIR, "07_feature_importance.png")
-        if os.path.exists(fi_path):
-            st.subheader("Variables importantes")
-            st.image(fi_path, use_container_width=True)
+    with c1:
+        render_metric_card("Modèle retenu", results["best_name"])
+    with c2:
+        render_metric_card("AUC", f"{results[best_key]['auc']:.3f}")
+    with c3:
+        render_metric_card("F1 Démission", f"{results[best_key]['f1']:.3f}")
+    with c4:
+        render_metric_card("Recall Démission", f"{results[best_key]['recall']:.3f}")
 
 
-# ─────────────────────────────────────────────
-# ONGLET 2 — PRÉDICTION
-# ─────────────────────────────────────────────
+def render_employee_selector(meta_df: pd.DataFrame) -> int:
+    st.markdown('<div class="section-title">Sélection employé</div>', unsafe_allow_html=True)
 
-def tab_prediction(feature_names: list[str], results: dict, ref_stats: dict):
-    st.header("Prédiction du risque")
-    st.markdown("Renseignez un profil employé pour obtenir une probabilité de départ et une explication locale.")
+    valid_meta = meta_df.dropna(subset=["EmpID"]).copy()
+    emp_choices = valid_meta["EmpID"].astype(int).tolist()
+    empid_to_idx = {int(row["EmpID"]): idx for idx, row in valid_meta.iterrows()}
 
-    opts = ref_stats.get("options", {})
+    selected_empid = st.selectbox(
+        "Choisir un EmpID",
+        options=emp_choices,
+        format_func=lambda x: f"EmpID {x}",
+    )
 
-    with st.form("employee_form"):
-        st.subheader("Profil RH")
-        c1, c2, c3, c4 = st.columns(4)
+    return empid_to_idx[int(selected_empid)]
 
-        with c1:
-            department = st.selectbox("Département", opts.get("Department", ["Production"]))
-            position = st.selectbox("Poste", opts.get("Position", ["Production Technician I"]))
-            manager_id = st.selectbox("ManagerID", opts.get("ManagerID", [15]))
-        with c2:
-            sex = st.selectbox("Genre", opts.get("Sex", ["M", "F"]))
-            marital_desc = st.selectbox("Statut marital", opts.get("MaritalDesc", ["Single"]))
-            state = st.selectbox("État", opts.get("State", ["MA"]))
-        with c3:
-            citizen_desc = st.selectbox("Citoyenneté", opts.get("CitizenDesc", ["US Citizen"]))
-            hispanic = st.selectbox("Hispanic/Latino", opts.get("HispanicLatino", ["No"]))
-            race = st.selectbox("Origine", opts.get("RaceDesc", ["White"]))
-        with c4:
-            recruit_src = st.selectbox("Source de recrutement", opts.get("RecruitmentSource", ["Indeed"]))
-            perf_label = st.selectbox("Performance", opts.get("PerformanceScore", ["Fully Meets"]))
-            married = st.checkbox("Marié(e)")
-            diversity_hire = st.checkbox("Recruté via Diversity Job Fair")
 
-        st.subheader("Indicateurs de suivi")
-        n1, n2, n3, n4, n5 = st.columns(5)
-        with n1:
-            age = st.slider("Âge", 18, 70, 35)
-        with n2:
-            tenure = st.slider("Ancienneté", 0, 25, 5)
-        with n3:
-            salary = st.number_input("Salaire annuel ($)", 40000, 300000, 62000, step=1000)
-        with n4:
-            engagement = st.slider("Engagement", 1.0, 5.0, 4.0, step=0.1)
-        with n5:
-            satisfaction = st.slider("Satisfaction", 1, 5, 3)
+def render_profile_tab(meta_row: pd.Series):
+    st.markdown('<div class="section-title">Profil employé</div>', unsafe_allow_html=True)
 
-        n6, n7, n8 = st.columns(3)
-        with n6:
-            absences = st.slider("Absences (j/an)", 0, 20, 10)
-        with n7:
-            days_late = st.slider("Retards (30 derniers jours)", 0, 6, 0)
-        with n8:
-            special_projects = st.slider("Projets spéciaux", 0, 8, 0)
-
-        st.subheader("Signaux textuels optionnels")
-        survey_comment = st.text_area(
-            "Commentaire employé",
-            placeholder="Ex: I would like more visibility on career growth and compensation."
-        )
-        transfer_request_text = st.text_area(
-            "Demande de mobilité interne",
-            placeholder="Ex: I would like to explore an internal move to another team."
-        )
-
-        submitted = st.form_submit_button("Analyser le profil")
-
-    if submitted:
-        inputs = {
-            "Department": department,
-            "Position": position,
-            "ManagerID": manager_id,
-            "Sex": sex,
-            "MaritalDesc": marital_desc,
-            "State": state,
-            "CitizenDesc": citizen_desc,
-            "HispanicLatino": hispanic,
-            "RaceDesc": race,
-            "RecruitmentSource": recruit_src,
-            "PerformanceScore": perf_label,
-            "Married": married,
-            "DiversityHire": diversity_hire,
-            "Age": age,
-            "Tenure": tenure,
-            "Salary": salary,
-            "EngagementSurvey": engagement,
-            "EmpSatisfaction": satisfaction,
-            "Absences": absences,
-            "DaysLateLast30": days_late,
-            "SpecialProjectsCount": special_projects,
-            "survey_comment": survey_comment,
-            "transfer_request_text": transfer_request_text,
-        }
-
-        X_row = build_feature_vector(inputs, feature_names, results, ref_stats)
-        prob = float(results[results["best_key"]]["model"].predict_proba(X_row)[0, 1])
-
-        st.session_state["last_inputs"] = inputs
-        st.session_state["last_row"] = X_row
-        st.session_state["last_prob"] = prob
-
-    if "last_prob" not in st.session_state:
-        return
-
-    prob = st.session_state["last_prob"]
-    X_row = st.session_state["last_row"]
-
-    st.markdown("---")
-    st.subheader("Résultat")
-    left, right = st.columns([2, 1])
+    left, right = st.columns([1.0, 1.2])
 
     with left:
         st.markdown(
-            f"<h2 style='color:{risk_color(prob)}; margin-bottom:0;'>{risk_label(prob)}</h2>",
-            unsafe_allow_html=True
+            f"""
+            <div class="soft-card">
+                <div class="metric-title">Identifiant</div>
+                <div class="metric-value">EmpID {int(meta_row['EmpID']) if pd.notna(meta_row['EmpID']) else 'N/A'}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
-        st.markdown(f"### Probabilité de départ : {prob * 100:.1f}%")
-        st.progress(float(prob))
 
-        if prob >= 0.70:
-            st.error("Ce profil présente un risque élevé. Une action RH rapide est recommandée.")
-        elif prob >= 0.40:
-            st.warning("Risque modéré. Un suivi ciblé paraît pertinent.")
-        else:
-            st.success("Risque faible selon le modèle actuel.")
+        info_lines = []
+        if "Position" in meta_row.index:
+            info_lines.append(f"<b>Poste</b> : {meta_row.get('Position', 'N/A')}")
+        if "Department" in meta_row.index:
+            info_lines.append(f"<b>Département</b> : {meta_row.get('Department', 'N/A')}")
+        if "ManagerID" in meta_row.index:
+            info_lines.append(f"<b>ManagerID</b> : {meta_row.get('ManagerID', 'N/A')}")
+
+        st.markdown(
+            f"""
+            <div class="soft-card">
+                {'<br>'.join(info_lines)}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        if "Termd" in meta_row.index:
+            status_text = "Départ confirmé" if meta_row["Termd"] == 1 else "Actif"
+            status_color = "#FEE4E2" if meta_row["Termd"] == 1 else "#EAF7EE"
+            text_color = "#B42318" if meta_row["Termd"] == 1 else "#1B5E20"
+            st.markdown(
+                f"""
+                <div class="soft-card">
+                    <div class="metric-title">Statut historique dans le dataset</div>
+                    <span class="pill" style="background:{status_color}; color:{text_color};">{status_text}</span>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
     with right:
-        fig, ax = plt.subplots(figsize=(3.5, 3.5), subplot_kw={"aspect": "equal"})
-        theta = np.linspace(0, np.pi, 300)
-        ax.plot(np.cos(theta), np.sin(theta), color="#E0E0E0", lw=12)
-        ax.plot(
-            np.cos(theta[:max(1, int(prob * 300))]),
-            np.sin(theta[:max(1, int(prob * 300))]),
-            color=risk_color(prob), lw=12
-        )
-        ax.text(0, -0.15, f"{prob * 100:.0f}%", ha="center", va="center",
-                fontsize=24, fontweight="bold", color=risk_color(prob))
-        ax.set_xlim(-1.3, 1.3)
-        ax.set_ylim(-0.4, 1.3)
-        ax.axis("off")
-        st.pyplot(fig)
-        plt.close()
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            render_metric_card("Âge", f"{int(meta_row.get('Age', 0))}")
+            render_metric_card("Salaire", f"${int(meta_row.get('Salary', 0)):,}".replace(",", " "))
+        with c2:
+            render_metric_card("Ancienneté", f"{int(meta_row.get('Tenure', 0))} ans")
+            render_metric_card("Engagement", f"{float(meta_row.get('EngagementSurvey', 0)):.2f}")
+        with c3:
+            render_metric_card("Satisfaction", f"{int(meta_row.get('EmpSatisfaction', 0))}/5")
+            render_metric_card("Absences", f"{int(meta_row.get('Absences', 0))} j")
 
-    st.markdown("---")
-    st.subheader("Explication locale SHAP")
+    st.markdown('<div class="section-title">Synthèse</div>', unsafe_allow_html=True)
 
-    explainer, sv_row, base_val, shap_model_name = get_individual_shap(results, X_row)
+    tags_col, text_col = st.columns([1, 2])
+
+    with tags_col:
+        st.markdown('<div class="soft-card">', unsafe_allow_html=True)
+        render_pill(f"Source: {meta_row.get('RecruitmentSource', 'N/A')}", "#E6F0FF", "#0B4F9C")
+        render_pill(f"Performance: {meta_row.get('PerformanceScore', 'N/A')}", "#EAF7EE", "#1B5E20")
+        render_pill(f"État: {meta_row.get('State', 'N/A')}", "#FFF4E5", "#9A3412")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with text_col:
+        st.markdown('<div class="soft-card">', unsafe_allow_html=True)
+        st.markdown("**Signal textuel synthétique**")
+        st.write(meta_row.get("survey_comment", "N/A"))
+        st.markdown("**Mobilité interne**")
+        transfer = meta_row.get("transfer_request_text", "")
+        st.write(transfer if str(transfer).strip() else "Aucune demande explicite détectée.")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_analysis_tab(results: dict, X_row: pd.DataFrame):
+    model = results[results["best_key"]]["model"]
+    prob = float(model.predict_proba(X_row)[0, 1])
+
+    st.markdown('<div class="section-title">Analyse IA</div>', unsafe_allow_html=True)
+    st.markdown(
+        f"""
+        <div class="risk-card" style="background:{risk_color(prob)};">
+            <div style="font-size:0.95rem; opacity:0.95;">Probabilité estimée de départ</div>
+            <div style="font-size:2rem; font-weight:800; margin-top:0.2rem;">{prob * 100:.1f}%</div>
+            <div style="font-size:1rem; margin-top:0.25rem;">{risk_label(prob)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.progress(prob)
+
+    sv_row, base_val, shap_model_name = get_individual_shap(results, X_row)
 
     if sv_row is None:
-        st.info("SHAP n'a pas pu être calculé pour ce profil.")
+        st.error("Impossible de calculer SHAP pour cet employé.")
         return
 
-    st.caption(f"Modèle utilisé pour l'explication : {shap_model_name}")
+    shap_df = pd.DataFrame({
+        "Variable": X_row.columns,
+        "SHAP": sv_row,
+        "Valeur": X_row.iloc[0].values
+    })
+    shap_df["abs_shap"] = shap_df["SHAP"].abs()
+    shap_df = shap_df.sort_values("abs_shap", ascending=False)
 
-    try:
-        exp = shap.Explanation(
-            values=sv_row,
-            base_values=base_val,
-            data=X_row.values[0],
-            feature_names=feature_names,
-        )
-        fig, _ = plt.subplots(figsize=(10, 6))
-        shap.waterfall_plot(exp, max_display=15, show=False)
-        plt.tight_layout()
-        st.pyplot(fig)
-        plt.close()
-    except Exception as e:
-        st.warning(f"Waterfall SHAP indisponible : {e}")
+    top_pos = shap_df[shap_df["SHAP"] > 0].head(5).copy()
+    top_neg = shap_df[shap_df["SHAP"] < 0].head(5).copy()
 
-    shap_df = (
-        pd.DataFrame({"Variable": feature_names, "SHAP": sv_row, "Valeur": X_row.iloc[0].values})
-        .assign(abs_shap=lambda d: d["SHAP"].abs())
-        .sort_values("abs_shap", ascending=False)
-        .head(12)
-    )
-    shap_df["Direction"] = shap_df["SHAP"].apply(
-        lambda v: "Augmente le risque" if v > 0 else "Réduit le risque"
-    )
-    st.dataframe(
-        shap_df[["Variable", "Valeur", "SHAP", "Direction"]].style.format({"Valeur": "{:.3f}", "SHAP": "{:.4f}"}),
-        use_container_width=True
-    )
+    st.markdown('<div class="soft-card">', unsafe_allow_html=True)
+    st.markdown("**Lecture RH simplifiée**")
+    st.write(build_executive_summary(prob, top_pos, top_neg))
+    st.caption(f"Explication calculée avec : {shap_model_name}")
+    st.markdown("</div>", unsafe_allow_html=True)
 
+    col1, col2 = st.columns([1.05, 0.95])
 
-# ─────────────────────────────────────────────
-# ONGLET 3 — EXPLICATIONS GLOBALES
-# ─────────────────────────────────────────────
+    with col1:
+        st.markdown('<div class="section-title">Facteurs qui augmentent le risque</div>', unsafe_allow_html=True)
+        if top_pos.empty:
+            st.info("Aucun facteur de hausse marqué.")
+        else:
+            pos_show = top_pos[["Variable", "SHAP", "Valeur"]].copy()
+            pos_show["SHAP"] = pos_show["SHAP"].round(4)
+            st.dataframe(pos_show, use_container_width=True, hide_index=True)
 
-def tab_xai(results: dict, feature_names: list[str]):
-    st.header("Explications globales")
+        st.markdown('<div class="section-title">Facteurs qui réduisent le risque</div>', unsafe_allow_html=True)
+        if top_neg.empty:
+            st.info("Peu de facteurs protecteurs visibles.")
+        else:
+            neg_show = top_neg[["Variable", "SHAP", "Valeur"]].copy()
+            neg_show["SHAP"] = neg_show["SHAP"].round(4)
+            st.dataframe(neg_show, use_container_width=True, hide_index=True)
 
-    c1, c2 = st.columns(2)
+    with col2:
+        st.markdown('<div class="section-title">Impact des principaux facteurs</div>', unsafe_allow_html=True)
+        plot_df = shap_df.head(10).copy().sort_values("SHAP")
+        colors = [CLR_LOW if v < 0 else CLR_HIGH for v in plot_df["SHAP"]]
 
-    with c1:
-        shap_summary = os.path.join(PLOTS_DIR, "08_shap_summary.png")
-        if os.path.exists(shap_summary):
-            st.subheader("SHAP summary")
-            st.image(shap_summary, use_container_width=True)
-
-    with c2:
-        shap_bar = os.path.join(PLOTS_DIR, "09_shap_bar.png")
-        if os.path.exists(shap_bar):
-            st.subheader("SHAP bar")
-            st.image(shap_bar, use_container_width=True)
-
-    st.markdown("---")
-    st.subheader("Top variables du modèle")
-
-    model = results[results["best_key"]]["model"]
-    if hasattr(model, "feature_importances_"):
-        fi = (
-            pd.Series(model.feature_importances_, index=feature_names)
-            .sort_values(ascending=False)
-            .head(15)
-            .reset_index()
-        )
-        fi.columns = ["Variable", "Importance"]
-
-        fig, ax = plt.subplots(figsize=(9, 6))
-        fi.sort_values("Importance").plot(
-            kind="barh", x="Variable", y="Importance",
-            ax=ax, color=CLR_PRIMARY, legend=False
-        )
-        ax.set_title("Top 15 variables")
-        ax.set_xlabel("Importance")
+        fig, ax = plt.subplots(figsize=(7, 5))
+        ax.barh(plot_df["Variable"], plot_df["SHAP"], color=colors)
+        ax.axvline(0, color="black", lw=1)
+        ax.set_title("Top contributions individuelles")
+        ax.set_xlabel("Valeur SHAP")
         sns.despine(ax=ax)
         plt.tight_layout()
         st.pyplot(fig)
         plt.close()
 
-        st.dataframe(fi.style.format({"Importance": "{:.4f}"}), use_container_width=True)
+    recs = generate_retention_recommendations(X_row.iloc[0], shap_df)
 
-
-# ─────────────────────────────────────────────
-# ONGLET 4 — SÉCURITÉ & RGPD
-# ─────────────────────────────────────────────
-
-def tab_security():
-    st.header("Sécurité & RGPD")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader("Mesures implémentées")
-        st.success(
-            "Pseudonymisation des données RH\n\n"
-            "Suppression des PII : nom, identifiant, date de naissance, code postal.\n\n"
-            "Suppression des variables de fuite\n\n"
-            "Retrait de DaysSinceLastReview du modèle final.\n\n"
-            "Séparation train / validation / test.\n\n"
-            "Explicabilité avec SHAP.\n\n"
-            "Sauvegarde locale des artefacts du modèle."
+    st.markdown('<div class="section-title">Recommandations de rétention</div>', unsafe_allow_html=True)
+    for i, rec in enumerate(recs, 1):
+        st.markdown(
+            f"""
+            <div class="action-card">
+                <div style="font-weight:700; margin-bottom:0.3rem; color:#101828;">Action {i}</div>
+                <div style="color:#101828;">{rec}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
 
-    with col2:
-        st.subheader("Recommandations")
-        st.warning(
-            "Chiffrement des données sensibles.\n\n"
-            "Contrôle d'accès au dashboard.\n\n"
-            "Journal d'audit des prédictions.\n\n"
-            "Audit des biais par groupes protégés.\n\n"
-            "Revue humaine avant toute décision RH.\n\n"
-            "Politique de conservation conforme au RGPD."
-        )
+    with st.expander("Voir l'explication SHAP détaillée"):
+        try:
+            exp = shap.Explanation(
+                values=sv_row,
+                base_values=base_val,
+                data=X_row.values[0],
+                feature_names=X_row.columns.tolist(),
+            )
+            fig, _ = plt.subplots(figsize=(10, 6))
+            shap.waterfall_plot(exp, max_display=15, show=False)
+            plt.tight_layout()
+            st.pyplot(fig)
+            plt.close()
+        except Exception as e:
+            st.warning(f"Waterfall SHAP indisponible : {e}")
 
 
 # ─────────────────────────────────────────────
@@ -713,37 +687,30 @@ def tab_security():
 # ─────────────────────────────────────────────
 
 def main():
-    best_model, feature_names, results = load_artifacts()
-    raw_df, ref_stats = load_reference_data()
+    if not os.path.exists(DATA_PATH):
+        st.error("HRDataset_v14.csv introuvable.")
+        return
 
-    render_sidebar(raw_df, results)
+    if not os.path.exists(os.path.join(MODELS_DIR, "best_model.pkl")):
+        st.error("Artefacts du modèle introuvables. Lancez d'abord hr_pipeline.py.")
+        return
 
-    st.title("HR Turnover Predictor")
-    st.markdown(
-        "Application Streamlit branchée sur les artefacts de `hr_pipeline.py` "
-        "pour visualiser les performances du modèle, explorer les facteurs de risque "
-        "et simuler des prédictions individuelles."
-    )
-    st.markdown("---")
+    _, feature_names, results = load_artifacts()
+    meta_df, X_full, _ = load_and_prepare_data(tuple(feature_names))
 
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "Vue globale",
-        "Prédiction",
-        "Explications IA",
-        "Sécurité & RGPD",
-    ])
+    render_header(results)
+
+    selected_idx = render_employee_selector(meta_df)
+    meta_row = meta_df.loc[selected_idx]
+    X_row = X_full.loc[[selected_idx]]
+
+    tab1, tab2 = st.tabs(["Profil employé", "Analyse IA"])
 
     with tab1:
-        tab_overview(raw_df, results)
+        render_profile_tab(meta_row)
 
     with tab2:
-        tab_prediction(feature_names, results, ref_stats)
-
-    with tab3:
-        tab_xai(results, feature_names)
-
-    with tab4:
-        tab_security()
+        render_analysis_tab(results, X_row)
 
 
 if __name__ == "__main__":
