@@ -2,11 +2,12 @@ import pandas as pd
 import uuid
 
 
-df = pd.read_csv("employees.csv")
+df = pd.read_csv("HRDataset_v14-1.csv")
 
 
 
 df["Employee_Name"] = ["EMP_NUM" + str(i).zfill(4) for i in range(len(df))]
+df["EmpID"] = [str(i).zfill(4) for i in range(len(df))]
 df["ManagerName"] = "ANON_MANAGER"
 
 
