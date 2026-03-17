@@ -68,7 +68,6 @@ def load_and_prepare():
     ref = pd.Timestamp("2019-03-01")
     df["Age"]               = (ref - df["DOB"]).dt.days // 365
     df["Tenure"]            = (ref - df["DateofHire"]).dt.days // 365
-    df["DaysSinceLastReview"] = (ref - df["LastPerformanceReview_Date"]).dt.days
     df["ManagerID"]         = df["ManagerID"].fillna(df["ManagerID"].median())
     df["AbsenteeismRate"]   = df["Absences"] / df["Tenure"].clip(lower=1)
     df["RiskScore_Engagement"] = df["DaysLateLast30"] * 2 + df["Absences"]
@@ -144,7 +143,7 @@ def train_model(X_hash: str):
 
     # ── SHAP (sur le RF de base) ──────────────────────────────
     explainer   = shap.TreeExplainer(rf, X_train_sc)
-    shap_values = explainer.shap_values(X_test_sc)
+    shap_values = explainer.shap_values(X_test_sc, check_additivity=False)
     if isinstance(shap_values, list):
         sv_class1 = shap_values[1]
     elif shap_values.ndim == 3:
@@ -264,8 +263,6 @@ def build_feature_vector(
     numeric_map["RiskScore_Engagement"] = (
         inputs.get("DaysLateLast30", 0) * 2 + inputs.get("Absences", 10)
     )
-    numeric_map["DaysSinceLastReview"]  = inputs.get("DaysSinceLastReview", 365)
-
     for col, val in numeric_map.items():
         if col in row.index:
             row[col] = val
@@ -519,7 +516,6 @@ def tab_prediction(results: dict):
             "Absences":             absences,
             "DaysLateLast30":       days_late,
             "SpecialProjectsCount": special_proj,
-            "DaysSinceLastReview":  365,
         }
         X_row = build_feature_vector(
             inputs, results["feature_names"], results["scaler"]
@@ -585,7 +581,7 @@ def tab_prediction(results: dict):
     # ── Explication SHAP individuelle ────────────────────────
     st.subheader("Facteurs determinants — Explication SHAP")
     try:
-        shap_row = results["explainer"].shap_values(X_row)
+        shap_row = results["explainer"].shap_values(X_row, check_additivity=False)
         if isinstance(shap_row, list):
             sv_row = shap_row[1][0]
         elif shap_row.ndim == 3:

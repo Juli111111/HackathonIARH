@@ -156,10 +156,6 @@ def preprocess(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
     reference_date = pd.Timestamp("2019-03-01")   # date de référence du dataset
     df["Age"]    = (reference_date - df["DOB"]).dt.days // 365
     df["Tenure"] = (reference_date - df["DateofHire"]).dt.days // 365
-    df["DaysSinceLastReview"] = (
-        reference_date - df["LastPerformanceReview_Date"]
-    ).dt.days
-
     # Valeurs manquantes ManagerID → médiane
     df["ManagerID"] = df["ManagerID"].fillna(df["ManagerID"].median())
 
@@ -202,7 +198,7 @@ def preprocess(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
 def feature_engineering(X: pd.DataFrame, y: pd.Series) -> pd.DataFrame:
     """
     Crée des variables additionnelles pour améliorer les modèles.
-    (Age, Tenure, DaysSinceLastReview sont déjà créées dans preprocess)
+    (Age, Tenure sont déjà créées dans preprocess)
     """
     print("\n" + "="*60)
     print(" ÉTAPE 3 — FEATURE ENGINEERING")
@@ -236,7 +232,7 @@ def feature_engineering(X: pd.DataFrame, y: pd.Series) -> pd.DataFrame:
         "Salary", "Age", "Tenure", "EngagementSurvey",
         "EmpSatisfaction", "Absences", "DaysLateLast30",
         "SpecialProjectsCount", "PerfScoreID", "AbsenteeismRate",
-        "RiskScore_Engagement", "DaysSinceLastReview"
+        "RiskScore_Engagement"
     ] if c in X.columns]
 
     corr_matrix = X[base_num_cols].copy()
@@ -432,7 +428,7 @@ def explain_with_shap(results: dict) -> None:
 
     # TreeExplainer — adapté RF et XGBoost
     explainer = shap.TreeExplainer(model, X_train)
-    shap_values = explainer.shap_values(X_test)
+    shap_values = explainer.shap_values(X_test, check_additivity=False)
 
     # Compatibilité ancienne/nouvelle API SHAP
     # Ancienne : list[class0_arr, class1_arr]  → shape (n, p)
