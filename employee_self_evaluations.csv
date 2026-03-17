@@ -1,0 +1,5 @@
+Timestamp,Department,Anciennete,Satisfaction,Absences,Engagement,Projets,Recherche_Emploi,Topic_Salaire,Topic_Carriere,Topic_Stress,Topic_Mobilite,Sentiment_Score,Risque_Score,Status_Invitation,Explication_Risque
+2026-03-17 11:31:24,Software Engineering,2,4,12,4.1,3,"Peut-être, dépend des opportunités",0,0,1,0,0,0.0576059257303865,STABLE,
+2026-03-17 11:32:47,Production,4,1,19,1.6,6,"Oui, activement",0,0,1,0,0,0.3433453484732337,STABLE,
+2026-03-17 11:38:41,Production,6,2,15,2.0,3,"Peut-être, dépend des opportunités",0,0,0,0,0,0.2343515778647208,STABLE,Absences élevées | Satisfaction faible | Engagement faible
+2026-03-17 11:39:22,Production,10,1,15,1.1,1,"Oui, activement",0,0,0,0,0,0.6402092628152397,RECOMMANDE,Absences élevées | Satisfaction faible | Engagement faible

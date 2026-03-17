@@ -45,6 +45,7 @@ CLR_SECONDARY = "#37474F"
 
 DATA_PATH    = "HRDataset_v14.csv"
 RANDOM_STATE = 42
+SELF_EVAL_PATH = "employee_self_evaluations.csv"  # Fichier de persistance
 
 
 # ──────────────────────────────────────────────────────────────
@@ -1025,6 +1026,460 @@ def tab_security():
 
 
 # ──────────────────────────────────────────────────────────────
+# ONGLET 6 — AUTO-ÉVALUATION EMPLOYÉ
+# ──────────────────────────────────────────────────────────────
+
+def analyze_text_sentiment(text: str) -> dict:
+    """Analyse le sentiment et extrait les thèmes du texte employé."""
+    text_lower = str(text).lower()
+    
+    # Keywords par thème
+    salary_keywords = ["compensation", "salaire", "reconnaissance", "augment", "rémunération", "revalu"]
+    growth_keywords = ["croissance", "carrière", "développement", "progression", "opportunité", "responsabilité", "avancement"]
+    stress_keywords = ["charge", "pression", "équilibre", "surmenage", "fatigue", "stress", "workload", "pace"]
+    mobility_keywords = ["interne", "mobilité", "changement", "autre équipe", "autre rôle", "transfer"]
+    positive_keywords = ["apprécie", "positif", "stable", "clair", "valeur", "satisfait", "content", "bien"]
+    negative_keywords = ["pas assez", "difficile", "pression", "dur", "mieux", "manque", "insatisfait", "mauvais"]
+    
+    # Comptage des keywords
+    salary_score = sum(1 for k in salary_keywords if k in text_lower)
+    growth_score = sum(1 for k in growth_keywords if k in text_lower)
+    stress_score = sum(1 for k in stress_keywords if k in text_lower)
+    mobility_score = sum(1 for k in mobility_keywords if k in text_lower)
+    pos_score = sum(1 for k in positive_keywords if k in text_lower)
+    neg_score = sum(1 for k in negative_keywords if k in text_lower)
+    
+    sentiment = pos_score - neg_score
+    
+    return {
+        "sentiment_score": sentiment,
+        "topic_salary": min(salary_score, 1),
+        "topic_growth": min(growth_score, 1),
+        "topic_stress": min(stress_score, 1),
+        "topic_mobility": min(mobility_score, 1),
+        "negative_text_flag": 1 if sentiment < 0 else 0,
+    }
+
+
+def calculate_composite_risk(inputs: dict, text_analysis: dict, looking_for: str, results: dict) -> tuple[float, str]:
+    """
+    Calcule un score de risque COMPOSITE basé sur :
+    - Données métier directes (absence, satisfaction, engagement)
+    - Analyse NLP (sentiment, thèmes)
+    - Prédiction du modèle ML
+    
+    Retourne : (score_final, explication)
+    """
+    
+    # ─ 1. SCORE MÉTIER (0-1) ─────────────────────────────────
+    # Absences élevées = risque
+    absences_score = min(inputs.get("Absences", 0) / 20, 1.0)  # 20 jours = 100% risque
+    
+    # Satisfaction/Engagement faibles = risque
+    satisfaction_score = 1 - (inputs.get("EmpSatisfaction", 3) / 5)  # Inverse : 5 = 0% risque
+    engagement_score = 1 - (inputs.get("EngagementSurvey", 4) / 5)
+    
+    # Peu de projets = risque (stagnation)
+    projects_score = 1 - min(inputs.get("SpecialProjectsCount", 0) / 5, 1.0)
+    
+    # Tenure très court = risque (phase d'intégration mal passée)
+    tenure = inputs.get("Tenure", 5)
+    tenure_score = 1 - min(tenure / 5, 1.0)  # 0-5 ans = risque, 5+ = pas de risque tenure
+    
+    # Score métier moyen pondéré
+    metric_score = (
+        absences_score * 0.25 +
+        satisfaction_score * 0.30 +
+        engagement_score * 0.25 +
+        projects_score * 0.10 +
+        tenure_score * 0.10
+    )
+    
+    # ─ 2. SCORE NLP (0-1) ────────────────────────────────────
+    # Sentiment négatif = risque
+    sentiment_risk = max(-text_analysis["sentiment_score"] / 3, 0)  # Plus de -3, c'est 100% risque
+    sentiment_risk = min(sentiment_risk, 1.0)
+    
+    # Thèmes problématiques
+    problematic_themes = (
+        text_analysis["topic_salary"] * 0.30 +
+        text_analysis["topic_stress"] * 0.35 +
+        text_analysis["topic_mobility"] * 0.25 +
+        text_analysis["negative_text_flag"] * 0.10
+    )
+    
+    nlp_score = (sentiment_risk * 0.5 + problematic_themes * 0.5)
+    nlp_score = min(nlp_score, 1.0)
+    
+    # ─ 3. BONUS/MALUS RECHERCHE D'EMPLOI ──────────────────
+    looking_bonus = {
+        "Non, je suis bien ici": -0.20,
+        "Peut-être, dépend des opportunités": 0.0,
+        "Oui, activement": 0.35
+    }
+    looking_delta = looking_bonus.get(looking_for, 0)
+    
+    # ─ 4. PRÉDICTION MODÈLE (si disponible) ──────────────
+    try:
+        X_row_model = build_feature_vector(
+            inputs, results["feature_names"], results["scaler"]
+        )
+        model_score = float(results["calib_model"].predict_proba(X_row_model)[0, 1])
+    except Exception:
+        model_score = 0.5  # Valeur neutre en cas d'erreur
+    
+    # ─ 5. SCORE FINAL (COMPOSITE) ───────────────────────────
+    # Combinaison pondérée
+    composite_score = (
+        metric_score * 0.35 +     # Données métier
+        nlp_score * 0.35 +        # Analyse texte
+        model_score * 0.30        # Modèle ML
+    )
+    
+    # Appliquer le bonus/malus
+    composite_score += looking_delta
+    composite_score = np.clip(composite_score, 0, 1)
+    
+    # Déterminer l'explication
+    risk_factors = []
+    if absences_score > 0.6:
+        risk_factors.append("Absences élevées")
+    if satisfaction_score > 0.5:
+        risk_factors.append("Satisfaction faible")
+    if engagement_score > 0.5:
+        risk_factors.append("Engagement faible")
+    if text_analysis["topic_salary"]:
+        risk_factors.append("Préoccupations salariales")
+    if text_analysis["topic_stress"]:
+        risk_factors.append("Stress / surcharge")
+    if text_analysis["topic_mobility"]:
+        risk_factors.append("Intérêt pour mobilité")
+    if text_analysis["sentiment_score"] < -1:
+        risk_factors.append("Ton négatif dans les commentaires")
+    
+    explanation = " | ".join(risk_factors) if risk_factors else "Peu de signaux de risque détectés"
+    
+    return composite_score, explanation
+
+
+def tab_employee_self_assessment(results: dict):
+    st.header("Auto-évaluation Employé")
+    st.markdown(
+        "Formulaire confidentiel destiné aux employés.  \n"
+        "Remplissez ce formulaire pour que nous puissions mieux comprendre votre situation "
+        "et vos attentes. Vos réponses resteront confidentielles."
+    )
+    
+    with st.form("employee_self_form", border=True):
+        st.subheader("Informations personnelles")
+        
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            dept_self = st.selectbox(
+                "Votre département",
+                ["Production", "IT/IS", "Sales", "Software Engineering",
+                 "Admin Offices", "Executive Office"],
+                key="es_dept"
+            )
+        with c2:
+            tenure_self = st.slider("Ancienneté (années)", 0, 25, 3, key="es_tenure")
+        with c3:
+            satisfaction_self = st.slider("Satisfaction générale (1-5)", 1, 5, 3, key="es_satisfaction")
+        
+        st.subheader("Vos commentaires")
+        comment1 = st.text_area(
+            "Comment vous sentez-vous dans votre rôle actuel ? (Ce qui vous plaît, ce qui pose problème)",
+            height=80, key="es_comment1",
+            placeholder="Décrivez votre expérience..."
+        )
+        
+        comment2 = st.text_area(
+            "Quelles sont vos attentes pour l'avenir professionnellement ?",
+            height=80, key="es_comment2",
+            placeholder="Parlez de vos aspirations, carrière, développement..."
+        )
+        
+        comment3 = st.text_area(
+            "Y a-t-il des changements qui vous aideraient à rester/être plus engagé(e) ?",
+            height=80, key="es_comment3",
+            placeholder="Actions correctives, conditions, environnement..."
+        )
+        
+        # Indicateurs de présence
+        st.subheader("Situation actuelle")
+        es1, es2, es3, es4 = st.columns(4)
+        with es1:
+            absences_self = st.slider("Jours d'absence (annuels)", 0, 20, 8, key="es_absences")
+        with es2:
+            engagement_self = st.slider("Score d'engagement ressenti", 1.0, 5.0, 3.5, step=0.1, key="es_engagement")
+        with es3:
+            projects_self = st.slider("Projets spéciaux réalisés", 0, 8, 2, key="es_projects")
+        with es4:
+            lookingfor = st.selectbox(
+                "Cherchez-vous un autre rôle ?",
+                ["Non, je suis bien ici", "Peut-être, dépend des opportunités", "Oui, activement"],
+                key="es_looking"
+            )
+        
+        submitted_self = st.form_submit_button("Envoyer ma réponse", use_container_width=True)
+    
+    if submitted_self:
+        # Validation : au moins un commentaire
+        if not comment1 and not comment2 and not comment3:
+            st.error("Veuillez remplir au moins un champ de commentaire.")
+            return
+        
+        # Concaténer et analyser le texte
+        full_text = f"{comment1} {comment2} {comment3}"
+        text_analysis = analyze_text_sentiment(full_text)
+        
+        # Bonus/malus selon la recherche d'emploi
+        looking_bonus = {"Non, je suis bien ici": -0.15, 
+                        "Peut-être, dépend des opportunités": 0.0,
+                        "Oui, activement": 0.25}
+        looking_delta = looking_bonus.get(lookingfor, 0)
+        
+        # Construire les inputs
+        inputs_self = {
+            "Department": dept_self,
+            "Sex": "M",
+            "Married": False,
+            "DiversityHire": False,
+            "Age": 35,
+            "Tenure": tenure_self,
+            "Salary": 62000,
+            "PerformanceScore": "Fully Meets",
+            "RecruitmentSource": "Employee Referral",
+            "EngagementSurvey": engagement_self,
+            "EmpSatisfaction": satisfaction_self,
+            "Absences": absences_self,
+            "DaysLateLast30": 0,
+            "SpecialProjectsCount": projects_self,
+        }
+        
+        # Calcul du score COMPOSITE (métier + NLP + modèle)
+        prob_self, risk_explanation = calculate_composite_risk(
+            inputs_self, text_analysis, lookingfor, results
+        )
+        
+        # Déterminer le statut d'invitation
+        if prob_self >= 0.70:
+            invite_status = "URGENT"
+        elif prob_self >= 0.40:
+            invite_status = "RECOMMANDE"
+        else:
+            invite_status = "STABLE"
+        
+        # Sauvegarder le résultat
+        timestamp = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+        eval_record = {
+            "Timestamp": timestamp,
+            "Department": dept_self,
+            "Anciennete": tenure_self,
+            "Satisfaction": satisfaction_self,
+            "Absences": absences_self,
+            "Engagement": engagement_self,
+            "Projets": projects_self,
+            "Recherche_Emploi": lookingfor,
+            "Topic_Salaire": text_analysis["topic_salary"],
+            "Topic_Carriere": text_analysis["topic_growth"],
+            "Topic_Stress": text_analysis["topic_stress"],
+            "Topic_Mobilite": text_analysis["topic_mobility"],
+            "Sentiment_Score": text_analysis["sentiment_score"],
+            "Risque_Score": prob_self,
+            "Status_Invitation": invite_status,
+            "Explication_Risque": risk_explanation,
+        }
+        
+        # Charger ou créer le CSV
+        try:
+            df_evals = pd.read_csv(SELF_EVAL_PATH)
+        except FileNotFoundError:
+            df_evals = pd.DataFrame()
+        
+        df_evals = pd.concat([df_evals, pd.DataFrame([eval_record])], ignore_index=True)
+        df_evals.to_csv(SELF_EVAL_PATH, index=False)
+        
+        # Message de remerciement UNIQUEMENT
+        st.markdown("---")
+        st.success(
+            "✅ **Merci d'avoir rempli ce formulaire !**\n\n"
+            "Vos réponses ont été enregistrées de manière confidentielle. "
+            "Les responsables RH examineront votre évaluation et vous contacteront si nécessaire. "
+            "Nous apprécions votre transparence et votre implication."
+        )
+        st.balloons()
+
+
+# ──────────────────────────────────────────────────────────────
+# ONGLET 7 — RÉSULTATS AUTO-ÉVALUATIONS (RH UNIQUEMENT)
+# ──────────────────────────────────────────────────────────────
+
+def tab_self_eval_results():
+    st.header("Résultats Auto-évaluations Employés (RH)")
+    st.markdown(
+        "Tableau de bord confidentiel — Résultats des auto-évaluations des employés  \n"
+        "**Accès réservé aux responsables RH.**"
+    )
+    
+    # Charger les résultats
+    try:
+        df_evals = pd.read_csv(SELF_EVAL_PATH)
+    except FileNotFoundError:
+        st.info("Aucune auto-évaluation enregistrée pour le moment.")
+        return
+    
+    if df_evals.empty:
+        st.info("Aucune auto-évaluation enregistrée pour le moment.")
+        return
+    
+    # Ajouter la colonne Explication_Risque si elle n'existe pas (rétrocompatibilité)
+    if "Explication_Risque" not in df_evals.columns:
+        df_evals["Explication_Risque"] = "Non disponible"
+    
+    st.markdown("---")
+    
+    # Statistiques globales
+    col_stats1, col_stats2, col_stats3, col_stats4 = st.columns(4)
+    
+    with col_stats1:
+        st.metric("Total évaluations", len(df_evals))
+    
+    with col_stats2:
+        urgent = (df_evals["Status_Invitation"] == "URGENT").sum()
+        st.metric("À inviter (URGENT)", urgent, delta=urgent)
+    
+    with col_stats3:
+        recommande = (df_evals["Status_Invitation"] == "RECOMMANDE").sum()
+        st.metric("À suivre (RECOMMANDÉ)", recommande)
+    
+    with col_stats4:
+        stable = (df_evals["Status_Invitation"] == "STABLE").sum()
+        st.metric("Profils stables", stable)
+    
+    st.markdown("---")
+    
+    # Tableau des résultats avec filtrage
+    st.subheader("Détail des évaluations")
+    
+    filter_col1, filter_col2, filter_col3 = st.columns(3)
+    with filter_col1:
+        status_filter = st.multiselect(
+            "Filtrer par statut",
+            options=["URGENT", "RECOMMANDE", "STABLE"],
+            default=["URGENT", "RECOMMANDE", "STABLE"]
+        )
+    with filter_col2:
+        dept_filter = st.multiselect(
+            "Filtrer par département",
+            options=df_evals["Department"].unique(),
+            default=df_evals["Department"].unique()
+        )
+    with filter_col3:
+        risk_range = st.slider(
+            "Plage de risque (%)",
+            0, 100, (0, 100),
+            step=5
+        )
+    
+    # Appliquer les filtres
+    df_filtered = df_evals[
+        (df_evals["Status_Invitation"].isin(status_filter)) &
+        (df_evals["Department"].isin(dept_filter)) &
+        (df_evals["Risque_Score"] >= risk_range[0]/100) &
+        (df_evals["Risque_Score"] <= risk_range[1]/100)
+    ].copy()
+    
+    st.info(f"**{len(df_filtered)} évaluation(s) correspondent aux critères**")
+    
+    # Afficher le tableau
+    display_cols = [
+        "Timestamp", "Department", "Anciennete", "Satisfaction", 
+        "Engagement", "Risque_Score", "Status_Invitation", 
+        "Explication_Risque", "Topic_Salaire", "Topic_Carriere", "Topic_Stress", "Topic_Mobilite"
+    ]
+    
+    # Garder seulement les colonnes qui existent
+    display_cols = [c for c in display_cols if c in df_filtered.columns]
+    
+    if not display_cols:
+        st.error("Aucune donnée à afficher.")
+        return
+    
+    df_display = df_filtered[display_cols].copy()
+    df_display["Risque_Score"] = df_display["Risque_Score"].apply(lambda x: f"{x*100:.1f}%")
+    
+    # Colorier les status
+    def color_status(val):
+        if val == "URGENT":
+            return f"background-color: {CLR_HIGH}; color: white; font-weight: bold"
+        elif val == "RECOMMANDE":
+            return f"background-color: {CLR_MED}; color: white; font-weight: bold"
+        else:
+            return f"background-color: {CLR_LOW}; color: white; font-weight: bold"
+    
+    st.dataframe(
+        df_display.style.map(color_status, subset=["Status_Invitation"]),
+        use_container_width=True,
+        height=400
+    )
+    
+    st.markdown("---")
+    
+    # Visualisations
+    col_viz1, col_viz2 = st.columns(2)
+    
+    with col_viz1:
+        st.subheader("Distribution des risques")
+        fig, ax = plt.subplots(figsize=(8, 5))
+        
+        bins = np.linspace(0, 1, 11)
+        ax.hist(df_evals["Risque_Score"], bins=bins, color=CLR_PRIMARY, alpha=0.7, edgecolor="black")
+        ax.axvline(df_evals["Risque_Score"].mean(), color=CLR_HIGH, linestyle="--", linewidth=2, label=f"Moyenne: {df_evals['Risque_Score'].mean():.2f}")
+        ax.set_xlabel("Score de risque")
+        ax.set_ylabel("Nombre d'employés")
+        ax.set_title("Distribution des scores de risque")
+        ax.legend()
+        sns.despine(ax=ax)
+        plt.tight_layout()
+        st.pyplot(fig)
+        plt.close()
+    
+    with col_viz2:
+        st.subheader("Thèmes détectés")
+        themes_data = {
+            "Salaire": df_evals["Topic_Salaire"].sum(),
+            "Carrière": df_evals["Topic_Carriere"].sum(),
+            "Stress": df_evals["Topic_Stress"].sum(),
+            "Mobilité": df_evals["Topic_Mobilite"].sum(),
+        }
+        themes_data = {k: v for k, v in sorted(themes_data.items(), key=lambda x: x[1], reverse=True)}
+        
+        fig, ax = plt.subplots(figsize=(8, 5))
+        ax.barh(list(themes_data.keys()), list(themes_data.values()), color=CLR_PRIMARY)
+        ax.set_xlabel("Nombre de mentions")
+        ax.set_title("Thèmes majeurs detects")
+        for i, v in enumerate(themes_data.values()):
+            ax.text(v + 0.1, i, str(int(v)), va="center", fontsize=10)
+        sns.despine(ax=ax)
+        plt.tight_layout()
+        st.pyplot(fig)
+        plt.close()
+    
+    # Export
+    st.markdown("---")
+    st.subheader("Exporter les données")
+    
+    csv_buffer = df_evals.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="Télécharger tous les résultats (CSV)",
+        data=csv_buffer,
+        file_name=f"auto_evaluations_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+        mime="text/csv"
+    )
+
+
+# ──────────────────────────────────────────────────────────────
 # MAIN
 # ──────────────────────────────────────────────────────────────
 
@@ -1041,12 +1496,14 @@ def main():
     )
     st.markdown("---")
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "Vue Globale",
         "Prediction",
         "Explications IA",
         "Analyse des Biais",
         "Securite & RGPD",
+        "Auto-evaluation Employe",
+        "Resultats Auto-eval (RH)",
     ])
 
     with tab1:
@@ -1059,6 +1516,10 @@ def main():
         tab_fairness(results)
     with tab5:
         tab_security()
+    with tab6:
+        tab_employee_self_assessment(results)
+    with tab7:
+        tab_self_eval_results()
 
 
 main()
