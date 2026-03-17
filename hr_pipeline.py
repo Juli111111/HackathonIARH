@@ -137,8 +137,7 @@ def preprocess(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
     reference_date = pd.Timestamp("2019-03-01")
     df["Age"] = (reference_date - df["DOB"]).dt.days // 365
     df["Tenure"] = (reference_date - df["DateofHire"]).dt.days // 365
-    df["DaysSinceLastReview"] = (reference_date - df["LastPerformanceReview_Date"]).dt.days
-
+    # Valeurs manquantes ManagerID → médiane
     df["ManagerID"] = df["ManagerID"].fillna(df["ManagerID"].median())
 
     pii_cols = [
@@ -628,32 +627,9 @@ def explain_with_shap(results: dict) -> None:
     X_test = results["X_test"]
     feat_names = results["feature_names"]
 
-    shap_model_name = None
-    explainer = None
-    shap_values = None
-
-    try_order = []
-    if results["best_key"] in results:
-        try_order.append((results["best_key"], results[results["best_key"]]["model"]))
-    if "rf" in results and results["best_key"] != "rf":
-        try_order.append(("rf", results["rf"]["model"]))
-    if "xgb" in results and results["best_key"] != "xgb":
-        try_order.append(("xgb", results["xgb"]["model"]))
-
-    last_error = None
-    for model_key, model in try_order:
-        try:
-            explainer = shap.TreeExplainer(model, X_train)
-            shap_values = explainer.shap_values(X_test, check_additivity=False)
-            shap_model_name = "Random Forest" if model_key == "rf" else "XGBoost"
-            break
-        except Exception as e:
-            last_error = e
-            continue
-
-    if shap_values is None:
-        print(f"► SHAP indisponible : {last_error}")
-        return
+    # TreeExplainer — adapté RF et XGBoost
+    explainer = shap.TreeExplainer(model, X_train)
+    shap_values = explainer.shap_values(X_test, check_additivity=False)
 
     if isinstance(shap_values, list):
         sv_class1 = shap_values[1]
