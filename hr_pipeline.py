@@ -158,6 +158,10 @@ def preprocess(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
     y = df["Termd"].copy()
     X = df.drop(columns=["Termd"])
 
+    if "DaysSinceLastReview" in X.columns:
+        X = X.drop(columns=["DaysSinceLastReview"], errors="ignore")
+        print("► Variable supprimée du modèle : DaysSinceLastReview (proxy trop indicatif)")
+
     cat_cols = X.select_dtypes(include=["object"]).columns.tolist()
     print(f"► One-Hot Encoding sur {len(cat_cols)} colonnes : {cat_cols}")
     X = pd.get_dummies(X, columns=cat_cols, drop_first=True)
@@ -185,25 +189,33 @@ def enrich_with_nlp(X: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
 
     if "EngagementSurvey" in X_nlp.columns:
         X_nlp["EngagementSurvey"] = pd.to_numeric(X_nlp["EngagementSurvey"], errors="coerce")
-        X_nlp["low_engagement_flag"] = (X_nlp["EngagementSurvey"] < X_nlp["EngagementSurvey"].median()).astype(int)
+        X_nlp["low_engagement_flag"] = (
+            X_nlp["EngagementSurvey"] < X_nlp["EngagementSurvey"].median()
+        ).astype(int)
     else:
         X_nlp["low_engagement_flag"] = 0
 
     if "Absences" in X_nlp.columns:
         X_nlp["Absences"] = pd.to_numeric(X_nlp["Absences"], errors="coerce")
-        X_nlp["high_absence_flag"] = (X_nlp["Absences"] >= X_nlp["Absences"].quantile(0.75)).astype(int)
+        X_nlp["high_absence_flag"] = (
+            X_nlp["Absences"] >= X_nlp["Absences"].quantile(0.75)
+        ).astype(int)
     else:
         X_nlp["high_absence_flag"] = 0
 
     if "Tenure" in X_nlp.columns:
         X_nlp["Tenure"] = pd.to_numeric(X_nlp["Tenure"], errors="coerce")
-        X_nlp["high_tenure_flag"] = (X_nlp["Tenure"] >= X_nlp["Tenure"].median()).astype(int)
+        X_nlp["high_tenure_flag"] = (
+            X_nlp["Tenure"] >= X_nlp["Tenure"].median()
+        ).astype(int)
     else:
         X_nlp["high_tenure_flag"] = 0
 
     if "SpecialProjectsCount" in X_nlp.columns:
         X_nlp["SpecialProjectsCount"] = pd.to_numeric(X_nlp["SpecialProjectsCount"], errors="coerce")
-        X_nlp["low_projects_flag"] = (X_nlp["SpecialProjectsCount"] <= X_nlp["SpecialProjectsCount"].median()).astype(int)
+        X_nlp["low_projects_flag"] = (
+            X_nlp["SpecialProjectsCount"] <= X_nlp["SpecialProjectsCount"].median()
+        ).astype(int)
     else:
         X_nlp["low_projects_flag"] = 0
 
@@ -215,7 +227,9 @@ def enrich_with_nlp(X: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
 
     if perf_col is not None:
         X_nlp[perf_col] = pd.to_numeric(X_nlp[perf_col], errors="coerce")
-        X_nlp["high_perf_flag"] = (X_nlp[perf_col] >= X_nlp[perf_col].median()).astype(int)
+        X_nlp["high_perf_flag"] = (
+            X_nlp[perf_col] >= X_nlp[perf_col].median()
+        ).astype(int)
     else:
         X_nlp["high_perf_flag"] = 0
 
@@ -316,7 +330,9 @@ def enrich_with_nlp(X: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     X_nlp["topic_stress"] = X_nlp["text_combined"].apply(lambda x: contains_any(x, stress_keywords))
     X_nlp["topic_mobility"] = X_nlp["text_combined"].apply(lambda x: contains_any(x, mobility_keywords))
     X_nlp["negative_text_flag"] = (X_nlp["text_sentiment_score"] < 0).astype(int)
-    X_nlp["mobility_request_present"] = X_nlp["transfer_request_text"].fillna("").str.len().gt(10).astype(int)
+    X_nlp["mobility_request_present"] = (
+        X_nlp["transfer_request_text"].fillna("").str.len().gt(10).astype(int)
+    )
 
     def recommend_actions(row):
         actions = []
@@ -381,8 +397,8 @@ def feature_engineering(X: pd.DataFrame, y: pd.Series) -> pd.DataFrame:
         "Salary", "Age", "Tenure", "EngagementSurvey",
         "EmpSatisfaction", "Absences", "DaysLateLast30",
         "SpecialProjectsCount", "PerfScoreID", "AbsenteeismRate",
-        "RiskScore_Engagement", "DaysSinceLastReview",
-        "text_sentiment_score", "salary_pct"
+        "RiskScore_Engagement", "text_sentiment_score", "salary_pct",
+        "ManagerID"
     ] if c in X.columns]
 
     corr_matrix = X[base_num_cols].copy()
@@ -599,90 +615,6 @@ def train_and_evaluate(X: pd.DataFrame, y: pd.Series) -> dict:
     results["feature_names"] = list(X.columns)
     return results
 
-def run_ablation_study(X: pd.DataFrame, y: pd.Series) -> pd.DataFrame:
-    print("\n" + "=" * 60)
-    print(" TEST D'ABLATION — VARIABLES POTENTIELLEMENT DOMINANTES")
-    print("=" * 60)
-
-    variants = {
-        "full": [],
-        "sans_DaysSinceLastReview": ["DaysSinceLastReview"],
-        "sans_ManagerID": ["ManagerID"],
-        "sans_les_deux": ["DaysSinceLastReview", "ManagerID"],
-    }
-
-    rows = []
-
-    for variant_name, cols_to_drop in variants.items():
-        cols_present = [c for c in cols_to_drop if c in X.columns]
-        Xv = X.drop(columns=cols_present, errors="ignore")
-
-        X_train_full, X_test, y_train_full, y_test = train_test_split(
-            Xv, y, test_size=TEST_SIZE, random_state=RANDOM_STATE, stratify=y
-        )
-
-        X_train, X_val, y_train, y_val = train_test_split(
-            X_train_full, y_train_full,
-            test_size=0.25,
-            random_state=RANDOM_STATE,
-            stratify=y_train_full
-        )
-
-        rf = RandomForestClassifier(
-            n_estimators=400,
-            max_depth=8,
-            min_samples_split=8,
-            min_samples_leaf=4,
-            class_weight="balanced",
-            random_state=RANDOM_STATE,
-            n_jobs=-1
-        )
-        rf.fit(X_train, y_train)
-
-        val_prob = rf.predict_proba(X_val)[:, 1]
-        thr, _ = find_best_threshold(y_val, val_prob)
-
-        y_prob = rf.predict_proba(X_test)[:, 1]
-        y_pred = (y_prob >= thr).astype(int)
-
-        auc = roc_auc_score(y_test, y_prob)
-        f1 = f1_score(y_test, y_pred, zero_division=0)
-        prec = precision_score(y_test, y_pred, zero_division=0)
-        rec = recall_score(y_test, y_pred, zero_division=0)
-
-        rows.append({
-            "variant": variant_name,
-            "dropped_cols": ", ".join(cols_present) if cols_present else "-",
-            "n_features": Xv.shape[1],
-            "threshold": round(thr, 2),
-            "auc": round(auc, 4),
-            "precision": round(prec, 4),
-            "recall": round(rec, 4),
-            "f1": round(f1, 4),
-        })
-
-    ablation_df = pd.DataFrame(rows)
-    print(ablation_df.to_string(index=False))
-
-    ablation_df.to_csv(f"{PLOTS_DIR}/ablation_results.csv", index=False)
-
-    fig, ax = plt.subplots(figsize=(10, 5))
-    plot_df = ablation_df.set_index("variant")[["auc", "f1", "recall"]]
-    plot_df.plot(kind="bar", ax=ax)
-    ax.set_title("Ablation study — Impact sur les performances")
-    ax.set_ylabel("Score")
-    ax.set_ylim(0, 1.05)
-    plt.xticks(rotation=15)
-    plt.tight_layout()
-    plt.savefig(f"{PLOTS_DIR}/11_ablation_study.png", dpi=150)
-    plt.close()
-
-    print(f"\n► Résultats d'ablation sauvegardés dans ./{PLOTS_DIR}/ablation_results.csv")
-    print(f"► Graphique d'ablation sauvegardé dans ./{PLOTS_DIR}/11_ablation_study.png")
-
-    return ablation_df
-
-
 # ─────────────────────────────────────────────
 # ÉTAPE 6 — IA EXPLICABLE (SHAP)
 # ─────────────────────────────────────────────
@@ -696,10 +628,10 @@ def explain_with_shap(results: dict) -> None:
     X_test = results["X_test"]
     feat_names = results["feature_names"]
 
-    shap_model = None
     shap_model_name = None
+    explainer = None
+    shap_values = None
 
-    # 1) On essaie d'abord le meilleur modèle
     try_order = []
     if results["best_key"] in results:
         try_order.append((results["best_key"], results[results["best_key"]]["model"]))
@@ -713,14 +645,13 @@ def explain_with_shap(results: dict) -> None:
         try:
             explainer = shap.TreeExplainer(model, X_train)
             shap_values = explainer.shap_values(X_test, check_additivity=False)
-            shap_model = model
             shap_model_name = "Random Forest" if model_key == "rf" else "XGBoost"
             break
         except Exception as e:
             last_error = e
             continue
 
-    if shap_model is None:
+    if shap_values is None:
         print(f"► SHAP indisponible : {last_error}")
         return
 
@@ -751,16 +682,13 @@ def explain_with_shap(results: dict) -> None:
     plt.savefig(f"{PLOTS_DIR}/09_shap_bar.png", dpi=150, bbox_inches="tight")
     plt.close()
 
-    probs_source = results["best_key"]
-    probs = results[probs_source]["y_prob"]
+    probs = results[results["best_key"]]["y_prob"]
     high_risk_idx = int(np.argmax(probs))
 
     expected_value = explainer.expected_value
     if isinstance(expected_value, (list, np.ndarray)):
-        if np.ndim(expected_value) > 0 and len(np.atleast_1d(expected_value)) > 1:
-            base_val = np.atleast_1d(expected_value)[1]
-        else:
-            base_val = np.atleast_1d(expected_value)[0]
+        expected_arr = np.atleast_1d(expected_value)
+        base_val = expected_arr[1] if len(expected_arr) > 1 else expected_arr[0]
     else:
         base_val = expected_value
 
@@ -788,7 +716,6 @@ def explain_with_shap(results: dict) -> None:
     for rank, (feat, val) in enumerate(top10, 1):
         print(f"  {rank}. {feat:40s} SHAP moyen = {val:.4f}")
 
-
 # ─────────────────────────────────────────────
 # ÉTAPE 7 — CYBERSÉCURITÉ ET CONFORMITÉ RGPD
 # ─────────────────────────────────────────────
@@ -809,6 +736,9 @@ MESURES APPLIQUÉES DANS CE PROJET
 
 ✅ Suppression des variables à fuite de données
    → TermReason, EmploymentStatus, EmpStatusID exclus.
+
+✅ Suppression de la variable DaysSinceLastReview du modèle
+   → Variable jugée trop proche de l'issue et donc non retenue pour la prédiction finale.
 
 ✅ Séparation stricte train/validation/test
    → Évite le sur-apprentissage et garantit une évaluation honnête.
@@ -868,8 +798,6 @@ def run_pipeline():
 
     results = train_and_evaluate(X, y)
 
-    ablation_df = run_ablation_study(X, y)
-
     explain_with_shap(results)
 
     cybersecurity_report()
@@ -879,7 +807,6 @@ def run_pipeline():
     print("\n" + "=" * 60)
     print(" PIPELINE TERMINÉ — Tous les graphiques sont dans ./plots/")
     print("=" * 60)
-
 
 if __name__ == "__main__":
     run_pipeline()
