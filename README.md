@@ -22,7 +22,7 @@ HR Data (311 employees)
         ↓
   Clean & prepare data
         ↓
-  Train a LightGBM model
+  Train a Random Forest model
         ↓
   Calibrate probabilities
         ↓
@@ -31,7 +31,7 @@ HR Data (311 employees)
   Show results in a dashboard
 ```
 
-**LightGBM** is a fast tree-based model (like many small decision trees working together).
+**Random Forest** is a model that builds hundreds of decision trees and combines their results for a more reliable prediction.
 **SHAP** explains each prediction by showing how much each variable pushed the score up or down.
 
 ---
@@ -119,7 +119,7 @@ The model correctly identifies ~62% of employees who actually leave.
 
 ## Tech stack
 
-- **LightGBM** — prediction model
+- **Random Forest** — prediction model
 - **SHAP** — explainability
 - **Streamlit** — dashboard
 - **scikit-learn** — preprocessing & calibration
