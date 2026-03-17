@@ -699,6 +699,10 @@ def explain_with_shap(results: dict) -> None:
     X_test = results["X_test"]
     feat_names = results["feature_names"]
 
+    best_key = results["best_key"]
+    model = results[best_key]["model"]
+    shap_model_name = results["best_name"]
+
     # TreeExplainer — adapté RF et XGBoost
     explainer = shap.TreeExplainer(model, X_train)
     shap_values = explainer.shap_values(X_test, check_additivity=False)

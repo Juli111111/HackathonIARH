@@ -24,85 +24,106 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-DATA_PATH = "HRDataset_v14.csv"
+DATA_PATH  = "HRDataset_v14.csv"
 MODELS_DIR = "models"
 
-CLR_HIGH = "#C62828"
-CLR_MED = "#E65100"
-CLR_LOW = "#2E7D32"
-CLR_PRIMARY = "#1565C0"
-CLR_TEXT = "#101828"
-CLR_MUTED = "#667085"
+CLR_HIGH      = "#C62828"
+CLR_MED       = "#E65100"
+CLR_LOW       = "#2E7D32"
+CLR_PRIMARY   = "#1565C0"
+CLR_TEXT      = "#101828"
+CLR_MUTED     = "#667085"
+CLR_BG        = "#F8FAFC"
+CLR_BORDER    = "#E6EAF0"
 
 
 # ─────────────────────────────────────────────
-# STYLE
+# STYLES
 # ─────────────────────────────────────────────
 
 st.markdown(
     """
     <style>
-    .main {
-        background-color: #F8FAFC;
-    }
+    .main { background-color: #F8FAFC; }
+
     .block-container {
-        padding-top: 1.2rem;
-        padding-bottom: 1rem;
+        padding-top: 1.4rem;
+        padding-bottom: 1.2rem;
         max-width: 1300px;
     }
-    .soft-card {
-        background: white;
-        border-radius: 16px;
-        padding: 1rem 1.1rem;
+
+    /* General content card */
+    .card {
+        background: #ffffff;
+        border-radius: 14px;
+        padding: 1rem 1.25rem;
         border: 1px solid #E6EAF0;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-        margin-bottom: 0.8rem;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+        margin-bottom: 0.9rem;
         color: #101828;
+        overflow: hidden;
     }
-    .risk-card {
-        border-radius: 18px;
-        padding: 1.1rem 1.2rem;
-        color: white;
-        margin-bottom: 0.8rem;
+
+    /* Coloured risk banner */
+    .risk-banner {
+        border-radius: 16px;
+        padding: 1.2rem 1.4rem;
+        color: #ffffff;
+        margin-bottom: 1rem;
     }
+
+    /* Left-accented action card for recommendations */
     .action-card {
-        background: white;
-        border-radius: 16px;
-        padding: 1rem 1.1rem;
+        background: #ffffff;
+        border-radius: 14px;
+        padding: 0.9rem 1.1rem;
         border: 1px solid #E6EAF0;
-        border-left: 6px solid #1565C0;
+        border-left: 5px solid #1565C0;
         box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-        margin-bottom: 0.8rem;
+        margin-bottom: 0.75rem;
         color: #101828;
     }
+
+    /* Section heading */
     .section-title {
-        font-size: 1.05rem;
+        font-size: 0.95rem;
         font-weight: 700;
+        letter-spacing: 0.01em;
+        color: #101828;
+        margin-top: 0.6rem;
         margin-bottom: 0.4rem;
-        color: #101828;
     }
-    .small-muted {
+
+    /* Metric card components */
+    .metric-label {
         color: #667085;
-        font-size: 0.92rem;
+        font-size: 0.82rem;
+        margin-bottom: 0.15rem;
+        font-weight: 500;
     }
-    .metric-title {
-        color: #667085;
-        font-size: 0.85rem;
-        margin-bottom: 0.2rem;
-    }
-    .metric-value {
-        font-size: 1.35rem;
+    .metric-val {
+        font-size: 1.3rem;
         font-weight: 700;
         color: #101828;
     }
+
+    /* Pill / badge */
     .pill {
         display: inline-block;
-        padding: 0.25rem 0.6rem;
+        padding: 0.22rem 0.6rem;
         border-radius: 999px;
-        font-size: 0.82rem;
+        font-size: 0.8rem;
         font-weight: 600;
-        margin-right: 0.35rem;
-        margin-bottom: 0.35rem;
+        margin-right: 0.3rem;
+        margin-bottom: 0.3rem;
+        border: 1px solid rgba(0,0,0,0.06);
+    }
+
+    /* Divider line */
+    .divider {
+        border: none;
+        border-top: 1px solid #E6EAF0;
+        margin: 0.8rem 0;
     }
     </style>
     """,
@@ -116,10 +137,10 @@ st.markdown(
 
 def risk_label(prob: float) -> str:
     if prob >= 0.70:
-        return "Risque élevé"
+        return "High Risk"
     if prob >= 0.40:
-        return "Risque modéré"
-    return "Risque faible"
+        return "Moderate Risk"
+    return "Low Risk"
 
 
 def risk_color(prob: float) -> str:
@@ -144,34 +165,43 @@ def contains_any(text: str, keywords: list[str]) -> int:
     return int(any(k in text for k in keywords))
 
 
-def render_metric_card(title: str, value: str):
+def card(content: str) -> None:
+    """Render a white card containing arbitrary HTML."""
+    st.markdown(f'<div class="card">{content}</div>', unsafe_allow_html=True)
+
+
+def metric_card(label: str, value: str) -> None:
     st.markdown(
         f"""
-        <div class="soft-card">
-            <div class="metric-title">{title}</div>
-            <div class="metric-value">{value}</div>
+        <div class="card">
+            <div class="metric-label">{label}</div>
+            <div class="metric-val">{value}</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
 
-def render_pill(text: str, bg: str, color: str = "#101828"):
+def pill(text: str, bg: str, color: str = "#101828") -> None:
     st.markdown(
-        f"""<span class="pill" style="background:{bg}; color:{color};">{text}</span>""",
+        f'<span class="pill" style="background:{bg}; color:{color};">{text}</span>',
         unsafe_allow_html=True,
     )
 
 
+def section_title(text: str) -> None:
+    st.markdown(f'<div class="section-title">{text}</div>', unsafe_allow_html=True)
+
+
 # ─────────────────────────────────────────────
-# CHARGEMENT
+# DATA LOADING
 # ─────────────────────────────────────────────
 
 @st.cache_resource
 def load_artifacts():
-    best_model = joblib.load(os.path.join(MODELS_DIR, "best_model.pkl"))
+    best_model    = joblib.load(os.path.join(MODELS_DIR, "best_model.pkl"))
     feature_names = joblib.load(os.path.join(MODELS_DIR, "feature_names.pkl"))
-    results = joblib.load(os.path.join(MODELS_DIR, "results_summary.pkl"))
+    results       = joblib.load(os.path.join(MODELS_DIR, "results_summary.pkl"))
     return best_model, feature_names, results
 
 
@@ -283,24 +313,24 @@ def enrich_with_nlp(X: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
         return choose(transfer_fit)
 
     demo_text_df = pd.DataFrame(index=X_nlp.index)
-    demo_text_df["survey_comment"] = X_nlp.apply(generate_survey, axis=1)
+    demo_text_df["survey_comment"]        = X_nlp.apply(generate_survey, axis=1)
     demo_text_df["transfer_request_text"] = X_nlp.apply(generate_transfer, axis=1)
 
-    salary_keywords = ["compensation", "salary", "recognition", "progression"]
-    growth_keywords = ["growth", "development", "career", "progressing", "opportunities", "responsibility"]
-    stress_keywords = ["workload", "pressure", "support", "balance", "pace"]
+    salary_keywords   = ["compensation", "salary", "recognition", "progression"]
+    growth_keywords   = ["growth", "development", "career", "progressing", "opportunities", "responsibility"]
+    stress_keywords   = ["workload", "pressure", "support", "balance", "pace"]
     mobility_keywords = ["internal move", "internal mobility", "transfer", "another team", "another role"]
 
     text_combined = (
         demo_text_df["survey_comment"].fillna("") + " " + demo_text_df["transfer_request_text"].fillna("")
     ).str.strip()
 
-    X_nlp["text_sentiment_score"] = text_combined.apply(sentiment_score)
-    X_nlp["topic_salary"] = text_combined.apply(lambda x: contains_any(x, salary_keywords))
-    X_nlp["topic_growth"] = text_combined.apply(lambda x: contains_any(x, growth_keywords))
-    X_nlp["topic_stress"] = text_combined.apply(lambda x: contains_any(x, stress_keywords))
-    X_nlp["topic_mobility"] = text_combined.apply(lambda x: contains_any(x, mobility_keywords))
-    X_nlp["negative_text_flag"] = (X_nlp["text_sentiment_score"] < 0).astype(int)
+    X_nlp["text_sentiment_score"]    = text_combined.apply(sentiment_score)
+    X_nlp["topic_salary"]            = text_combined.apply(lambda x: contains_any(x, salary_keywords))
+    X_nlp["topic_growth"]            = text_combined.apply(lambda x: contains_any(x, growth_keywords))
+    X_nlp["topic_stress"]            = text_combined.apply(lambda x: contains_any(x, stress_keywords))
+    X_nlp["topic_mobility"]          = text_combined.apply(lambda x: contains_any(x, mobility_keywords))
+    X_nlp["negative_text_flag"]      = (X_nlp["text_sentiment_score"] < 0).astype(int)
     X_nlp["mobility_request_present"] = demo_text_df["transfer_request_text"].fillna("").str.len().gt(10).astype(int)
 
     return X_nlp, demo_text_df
@@ -315,14 +345,14 @@ def load_and_prepare_data(feature_names: tuple):
 
     df = df_raw.copy()
 
-    df["DOB"] = pd.to_datetime(df["DOB"], dayfirst=False, errors="coerce")
+    df["DOB"]     = pd.to_datetime(df["DOB"],     dayfirst=False, errors="coerce")
     df["DateofHire"] = pd.to_datetime(df["DateofHire"], dayfirst=False, errors="coerce")
     df["LastPerformanceReview_Date"] = pd.to_datetime(
         df["LastPerformanceReview_Date"], dayfirst=False, errors="coerce"
     )
 
     ref_date = pd.Timestamp("2019-03-01")
-    df["Age"] = (ref_date - df["DOB"]).dt.days // 365
+    df["Age"]    = (ref_date - df["DOB"]).dt.days // 365
     df["Tenure"] = (ref_date - df["DateofHire"]).dt.days // 365
     df["DaysSinceLastReview"] = (ref_date - df["LastPerformanceReview_Date"]).dt.days
     df["ManagerID"] = df["ManagerID"].fillna(df["ManagerID"].median())
@@ -335,13 +365,9 @@ def load_and_prepare_data(feature_names: tuple):
     ]
     meta_df = df[[c for c in meta_cols if c in df.columns]].copy()
 
-    pii_cols = [
-        "Employee_Name", "EmpID", "Zip", "ManagerName",
-        "DOB", "DateofHire", "LastPerformanceReview_Date"
-    ]
-    leaky_cols = [
-        "TermReason", "EmploymentStatus", "EmpStatusID", "DateofTermination"
-    ]
+    pii_cols   = ["Employee_Name", "EmpID", "Zip", "ManagerName",
+                  "DOB", "DateofHire", "LastPerformanceReview_Date"]
+    leaky_cols = ["TermReason", "EmploymentStatus", "EmpStatusID", "DateofTermination"]
 
     df_model = df.drop(columns=pii_cols + leaky_cols, errors="ignore")
 
@@ -373,7 +399,7 @@ def load_and_prepare_data(feature_names: tuple):
 
 
 # ─────────────────────────────────────────────
-# SHAP
+# SHAP ENGINE
 # ─────────────────────────────────────────────
 
 def get_individual_shap(results: dict, X_row: pd.DataFrame):
@@ -387,7 +413,7 @@ def get_individual_shap(results: dict, X_row: pd.DataFrame):
 
     for model_key, model in try_order:
         try:
-            explainer = shap.TreeExplainer(model, results["X_train"])
+            explainer   = shap.TreeExplainer(model, results["X_train"])
             shap_values = explainer.shap_values(X_row, check_additivity=False)
 
             if isinstance(shap_values, list):
@@ -413,7 +439,7 @@ def get_individual_shap(results: dict, X_row: pd.DataFrame):
 
 
 # ─────────────────────────────────────────────
-# RECOMMANDATIONS
+# RECOMMENDATION ENGINE
 # ─────────────────────────────────────────────
 
 def generate_retention_recommendations(x_row: pd.Series, shap_df: pd.DataFrame) -> list[str]:
@@ -423,25 +449,52 @@ def generate_retention_recommendations(x_row: pd.Series, shap_df: pd.DataFrame) 
         return not shap_df[(shap_df["Variable"] == feature) & (shap_df["SHAP"] > 0)].empty
 
     if x_row.get("low_salary_flag", 0) == 1 or x_row.get("topic_salary", 0) == 1:
-        recs.append("Lancer une revue de rémunération ou clarifier rapidement la trajectoire d'évolution salariale.")
+        recs.append(
+            "Initiate a compensation review or clearly communicate the salary "
+            "progression path at the earliest opportunity."
+        )
 
-    if x_row.get("topic_growth", 0) == 1 or (x_row.get("high_tenure_flag", 0) == 1 and x_row.get("low_projects_flag", 0) == 1):
-        recs.append("Prévoir un entretien de carrière pour clarifier les perspectives d'évolution, la montée en responsabilité et les prochaines étapes.")
+    if x_row.get("topic_growth", 0) == 1 or (
+        x_row.get("high_tenure_flag", 0) == 1 and x_row.get("low_projects_flag", 0) == 1
+    ):
+        recs.append(
+            "Schedule a career development conversation to clarify growth prospects, "
+            "increasing responsibilities, and near-term next steps."
+        )
 
-    if x_row.get("topic_stress", 0) == 1 or x_row.get("high_absence_flag", 0) == 1 or positive("AbsenteeismRate"):
-        recs.append("Vérifier la charge de travail et mettre en place un plan de soutien managérial ou un ajustement court terme.")
+    if (
+        x_row.get("topic_stress", 0) == 1
+        or x_row.get("high_absence_flag", 0) == 1
+        or positive("AbsenteeismRate")
+    ):
+        recs.append(
+            "Assess current workload and establish a short-term managerial support "
+            "plan or a workload adjustment."
+        )
 
     if x_row.get("topic_mobility", 0) == 1 or x_row.get("mobility_request_present", 0) == 1:
-        recs.append("Explorer une mobilité interne ou un changement de périmètre afin de retenir le collaborateur dans l'entreprise.")
+        recs.append(
+            "Explore an internal mobility opportunity or a scope change as a retention "
+            "lever to keep the employee within the organization."
+        )
 
     if x_row.get("low_engagement_flag", 0) == 1 or x_row.get("text_sentiment_score", 0) < 0:
-        recs.append("Organiser rapidement un point RH avec le manager pour identifier les irritants concrets et sécuriser un plan d'action.")
+        recs.append(
+            "Arrange an urgent HR check-in with the direct manager to surface specific "
+            "pain points and agree on a concrete action plan."
+        )
 
     if positive("ManagerID"):
-        recs.append("Analyser le contexte managérial de l'équipe et renforcer le suivi du collaborateur à court terme.")
+        recs.append(
+            "Review the team's managerial context and strengthen near-term follow-up "
+            "and support for this employee."
+        )
 
     if not recs:
-        recs.append("Maintenir un suivi régulier, avec feedback managérial, reconnaissance et échange de carrière.")
+        recs.append(
+            "Maintain regular check-ins combining managerial feedback, recognition, "
+            "and career dialogue."
+        )
 
     return recs[:4]
 
@@ -450,95 +503,100 @@ def build_executive_summary(prob: float, top_pos: pd.DataFrame, top_neg: pd.Data
     pos_feats = top_pos["Variable"].head(3).tolist()
     neg_feats = top_neg["Variable"].head(2).tolist()
 
-    pos_txt = ", ".join(pos_feats) if pos_feats else "aucun facteur dominant"
-    neg_txt = ", ".join(neg_feats) if neg_feats else "peu de facteurs protecteurs visibles"
+    pos_txt = ", ".join(pos_feats) if pos_feats else "no dominant contributing factors"
+    neg_txt = ", ".join(neg_feats) if neg_feats else "no significant protective factors"
 
     return (
-        f"Le modèle estime un {risk_label(prob).lower()} de départ. "
-        f"Les facteurs qui augmentent le plus ce risque sont : {pos_txt}. "
-        f"Les éléments qui jouent plutôt en faveur de la rétention sont : {neg_txt}."
+        f"The model estimates a {risk_label(prob).lower()} of departure. "
+        f"The factors most strongly increasing this risk are: {pos_txt}. "
+        f"The factors most supportive of retention are: {neg_txt}."
     )
 
 
 # ─────────────────────────────────────────────
-# INTERFACE
+# UI COMPONENTS
 # ─────────────────────────────────────────────
 
-def render_header(results: dict):
+def render_header(results: dict) -> None:
     best_key = results["best_key"]
 
     st.title("HR Turnover Predictor")
-    st.caption("Fiche employé et analyse IA pour la rétention RH")
+    st.caption("AI-powered employee retention analysis")
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        render_metric_card("Modèle retenu", results["best_name"])
+        metric_card("Active Model", results["best_name"])
     with c2:
-        render_metric_card("AUC", f"{results[best_key]['auc']:.3f}")
+        metric_card("AUC-ROC", f"{results[best_key]['auc']:.3f}")
     with c3:
-        render_metric_card("F1 Démission", f"{results[best_key]['f1']:.3f}")
+        metric_card("F1 — Turnover Class", f"{results[best_key]['f1']:.3f}")
     with c4:
-        render_metric_card("Recall Démission", f"{results[best_key]['recall']:.3f}")
+        metric_card("Recall — Turnover Class", f"{results[best_key]['recall']:.3f}")
 
 
 def render_employee_selector(meta_df: pd.DataFrame) -> int:
-    st.markdown('<div class="section-title">Sélection employé</div>', unsafe_allow_html=True)
+    section_title("Employee Selection")
 
-    valid_meta = meta_df.dropna(subset=["EmpID"]).copy()
-    emp_choices = valid_meta["EmpID"].astype(int).tolist()
-    empid_to_idx = {int(row["EmpID"]): idx for idx, row in valid_meta.iterrows()}
+    valid_meta    = meta_df.dropna(subset=["EmpID"]).copy()
+    emp_choices   = valid_meta["EmpID"].astype(int).tolist()
+    empid_to_idx  = {int(row["EmpID"]): idx for idx, row in valid_meta.iterrows()}
 
     selected_empid = st.selectbox(
-        "Choisir un EmpID",
+        "Select an Employee ID",
         options=emp_choices,
-        format_func=lambda x: f"EmpID {x}",
+        format_func=lambda x: f"Employee ID: {x}",
     )
 
     return empid_to_idx[int(selected_empid)]
 
 
-def render_profile_tab(meta_row: pd.Series):
-    st.markdown('<div class="section-title">Profil employé</div>', unsafe_allow_html=True)
+def render_profile_tab(meta_row: pd.Series) -> None:
 
+    # ── Identity & key figures ─────────────────────────────────
+    section_title("Employee Profile")
     left, right = st.columns([1.0, 1.2])
 
     with left:
+        emp_id    = int(meta_row["EmpID"]) if pd.notna(meta_row.get("EmpID")) else "N/A"
+        position  = meta_row.get("Position", "N/A")
+        dept      = meta_row.get("Department", "N/A")
+        mgr_id    = meta_row.get("ManagerID", "N/A")
+
         st.markdown(
             f"""
-            <div class="soft-card">
-                <div class="metric-title">Identifiant</div>
-                <div class="metric-value">EmpID {int(meta_row['EmpID']) if pd.notna(meta_row['EmpID']) else 'N/A'}</div>
+            <div class="card">
+                <div class="metric-label">Employee ID</div>
+                <div class="metric-val">ID: {emp_id}</div>
             </div>
             """,
             unsafe_allow_html=True,
         )
 
-        info_lines = []
-        if "Position" in meta_row.index:
-            info_lines.append(f"<b>Poste</b> : {meta_row.get('Position', 'N/A')}")
-        if "Department" in meta_row.index:
-            info_lines.append(f"<b>Département</b> : {meta_row.get('Department', 'N/A')}")
-        if "ManagerID" in meta_row.index:
-            info_lines.append(f"<b>ManagerID</b> : {meta_row.get('ManagerID', 'N/A')}")
-
         st.markdown(
             f"""
-            <div class="soft-card">
-                {'<br>'.join(info_lines)}
+            <div class="card">
+                <div style="line-height:1.8;">
+                    <b>Position</b>: {position}<br>
+                    <b>Department</b>: {dept}<br>
+                    <b>Manager ID</b>: {mgr_id}
+                </div>
             </div>
             """,
             unsafe_allow_html=True,
         )
 
         if "Termd" in meta_row.index:
-            status_text = "Départ confirmé" if meta_row["Termd"] == 1 else "Actif"
-            status_color = "#FEE4E2" if meta_row["Termd"] == 1 else "#EAF7EE"
-            text_color = "#B42318" if meta_row["Termd"] == 1 else "#1B5E20"
+            terminated    = meta_row["Termd"] == 1
+            status_text   = "Terminated" if terminated else "Active"
+            status_bg     = "#FEE4E2" if terminated else "#ECFDF3"
+            status_color  = "#B42318" if terminated else "#027A48"
             st.markdown(
                 f"""
-                <div class="soft-card">
-                    <div class="metric-title">Statut historique dans le dataset</div>
-                    <span class="pill" style="background:{status_color}; color:{text_color};">{status_text}</span>
+                <div class="card">
+                    <div class="metric-label">Historical Status in Dataset</div>
+                    <span class="pill" style="background:{status_bg}; color:{status_color};">
+                        {status_text}
+                    </span>
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -547,63 +605,99 @@ def render_profile_tab(meta_row: pd.Series):
     with right:
         c1, c2, c3 = st.columns(3)
         with c1:
-            render_metric_card("Âge", f"{int(meta_row.get('Age', 0))}")
-            render_metric_card("Salaire", f"${int(meta_row.get('Salary', 0)):,}".replace(",", " "))
+            metric_card("Age",    f"{int(meta_row.get('Age', 0))}")
+            metric_card("Salary", f"${int(meta_row.get('Salary', 0)):,}".replace(",", " "))
         with c2:
-            render_metric_card("Ancienneté", f"{int(meta_row.get('Tenure', 0))} ans")
-            render_metric_card("Engagement", f"{float(meta_row.get('EngagementSurvey', 0)):.2f}")
+            metric_card("Tenure",      f"{int(meta_row.get('Tenure', 0))} yrs")
+            metric_card("Engagement",  f"{float(meta_row.get('EngagementSurvey', 0)):.2f} / 5")
         with c3:
-            render_metric_card("Satisfaction", f"{int(meta_row.get('EmpSatisfaction', 0))}/5")
-            render_metric_card("Absences", f"{int(meta_row.get('Absences', 0))} j")
+            metric_card("Satisfaction", f"{int(meta_row.get('EmpSatisfaction', 0))} / 5")
+            metric_card("Absences",     f"{int(meta_row.get('Absences', 0))} days")
 
-    st.markdown('<div class="section-title">Synthèse</div>', unsafe_allow_html=True)
+    # ── Summary tags & text signals ───────────────────────────
+    st.markdown('<hr class="divider">', unsafe_allow_html=True)
+    section_title("Summary")
 
     tags_col, text_col = st.columns([1, 2])
 
     with tags_col:
-        st.markdown('<div class="soft-card">', unsafe_allow_html=True)
-        render_pill(f"Source: {meta_row.get('RecruitmentSource', 'N/A')}", "#E6F0FF", "#0B4F9C")
-        render_pill(f"Performance: {meta_row.get('PerformanceScore', 'N/A')}", "#EAF7EE", "#1B5E20")
-        render_pill(f"État: {meta_row.get('State', 'N/A')}", "#FFF4E5", "#9A3412")
-        st.markdown("</div>", unsafe_allow_html=True)
+        recruitment = meta_row.get("RecruitmentSource", "N/A")
+        performance = meta_row.get("PerformanceScore",  "N/A")
+        state       = meta_row.get("State", "N/A")
+
+        st.markdown(
+            f"""
+            <div class="card">
+                <div class="metric-label" style="margin-bottom:0.5rem;">Tags</div>
+                <span class="pill" style="background:#E6F0FF; color:#0B4F9C;">
+                    Source: {recruitment}
+                </span><br>
+                <span class="pill" style="background:#ECFDF3; color:#027A48;">
+                    Performance: {performance}
+                </span><br>
+                <span class="pill" style="background:#FFF4E5; color:#9A3412;">
+                    State: {state}
+                </span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     with text_col:
-        st.markdown('<div class="soft-card">', unsafe_allow_html=True)
-        st.markdown("**Signal textuel synthétique**")
-        st.write(meta_row.get("survey_comment", "N/A"))
-        st.markdown("**Mobilité interne**")
-        transfer = meta_row.get("transfer_request_text", "")
-        st.write(transfer if str(transfer).strip() else "Aucune demande explicite détectée.")
-        st.markdown("</div>", unsafe_allow_html=True)
+        survey   = meta_row.get("survey_comment", "N/A")
+        transfer = str(meta_row.get("transfer_request_text", "")).strip()
+
+        st.markdown(
+            f"""
+            <div class="card">
+                <div class="metric-label">Generated Survey Comment</div>
+                <div style="color:#101828; margin-bottom:0.75rem;">{survey}</div>
+                <div class="metric-label">Internal Mobility Request</div>
+                <div style="color:#101828;">
+                    {transfer if transfer else "No internal transfer request detected."}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 
-def render_analysis_tab(results: dict, X_row: pd.DataFrame):
+def render_analysis_tab(results: dict, X_row: pd.DataFrame) -> None:
+
     model = results[results["best_key"]]["model"]
-    prob = float(model.predict_proba(X_row)[0, 1])
+    prob  = float(model.predict_proba(X_row)[0, 1])
 
-    st.markdown('<div class="section-title">Analyse IA</div>', unsafe_allow_html=True)
+    # ── Risk banner ────────────────────────────────────────────
+    section_title("AI Analysis")
     st.markdown(
         f"""
-        <div class="risk-card" style="background:{risk_color(prob)};">
-            <div style="font-size:0.95rem; opacity:0.95;">Probabilité estimée de départ</div>
-            <div style="font-size:2rem; font-weight:800; margin-top:0.2rem;">{prob * 100:.1f}%</div>
-            <div style="font-size:1rem; margin-top:0.25rem;">{risk_label(prob)}</div>
+        <div class="risk-banner" style="background:{risk_color(prob)};">
+            <div style="font-size:0.92rem; opacity:0.9; font-weight:500;">
+                Estimated Turnover Probability
+            </div>
+            <div style="font-size:2.1rem; font-weight:800; margin:0.15rem 0;">
+                {prob * 100:.1f}%
+            </div>
+            <div style="font-size:0.95rem; font-weight:600; letter-spacing:0.02em;">
+                {risk_label(prob)}
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
     st.progress(prob)
 
+    # ── SHAP computation ───────────────────────────────────────
     sv_row, base_val, shap_model_name = get_individual_shap(results, X_row)
 
     if sv_row is None:
-        st.error("Impossible de calculer SHAP pour cet employé.")
+        st.error("SHAP explanation could not be computed for this employee.")
         return
 
     shap_df = pd.DataFrame({
         "Variable": X_row.columns,
-        "SHAP": sv_row,
-        "Valeur": X_row.iloc[0].values
+        "SHAP":     sv_row,
+        "Value":    X_row.iloc[0].values,
     })
     shap_df["abs_shap"] = shap_df["SHAP"].abs()
     shap_df = shap_df.sort_values("abs_shap", ascending=False)
@@ -611,61 +705,80 @@ def render_analysis_tab(results: dict, X_row: pd.DataFrame):
     top_pos = shap_df[shap_df["SHAP"] > 0].head(5).copy()
     top_neg = shap_df[shap_df["SHAP"] < 0].head(5).copy()
 
-    st.markdown('<div class="soft-card">', unsafe_allow_html=True)
-    st.markdown("**Lecture RH simplifiée**")
-    st.write(build_executive_summary(prob, top_pos, top_neg))
-    st.caption(f"Explication calculée avec : {shap_model_name}")
-    st.markdown("</div>", unsafe_allow_html=True)
+    # ── Plain-language summary ─────────────────────────────────
+    summary_text = build_executive_summary(prob, top_pos, top_neg)
+    st.markdown(
+        f"""
+        <div class="card">
+            <div class="metric-label" style="margin-bottom:0.3rem;">Plain-Language HR Summary</div>
+            <div style="color:#101828; line-height:1.6;">{summary_text}</div>
+            <div style="color:#667085; font-size:0.8rem; margin-top:0.5rem;">
+                Explanation computed using: {shap_model_name}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    col1, col2 = st.columns([1.05, 0.95])
+    # ── SHAP factor tables + chart ─────────────────────────────
+    st.markdown('<hr class="divider">', unsafe_allow_html=True)
+    col_tables, col_chart = st.columns([1.05, 0.95])
 
-    with col1:
-        st.markdown('<div class="section-title">Facteurs qui augmentent le risque</div>', unsafe_allow_html=True)
+    with col_tables:
+        section_title("Factors Increasing Turnover Risk")
         if top_pos.empty:
-            st.info("Aucun facteur de hausse marqué.")
+            st.info("No significant risk-increasing factors detected.")
         else:
-            pos_show = top_pos[["Variable", "SHAP", "Valeur"]].copy()
-            pos_show["SHAP"] = pos_show["SHAP"].round(4)
-            st.dataframe(pos_show, use_container_width=True, hide_index=True)
+            display_pos = top_pos[["Variable", "SHAP", "Value"]].copy()
+            display_pos["SHAP"] = display_pos["SHAP"].round(4)
+            st.dataframe(display_pos, use_container_width=True, hide_index=True)
 
-        st.markdown('<div class="section-title">Facteurs qui réduisent le risque</div>', unsafe_allow_html=True)
+        section_title("Factors Reducing Turnover Risk")
         if top_neg.empty:
-            st.info("Peu de facteurs protecteurs visibles.")
+            st.info("No significant protective factors detected.")
         else:
-            neg_show = top_neg[["Variable", "SHAP", "Valeur"]].copy()
-            neg_show["SHAP"] = neg_show["SHAP"].round(4)
-            st.dataframe(neg_show, use_container_width=True, hide_index=True)
+            display_neg = top_neg[["Variable", "SHAP", "Value"]].copy()
+            display_neg["SHAP"] = display_neg["SHAP"].round(4)
+            st.dataframe(display_neg, use_container_width=True, hide_index=True)
 
-    with col2:
-        st.markdown('<div class="section-title">Impact des principaux facteurs</div>', unsafe_allow_html=True)
+    with col_chart:
+        section_title("Top Feature Contributions")
         plot_df = shap_df.head(10).copy().sort_values("SHAP")
-        colors = [CLR_LOW if v < 0 else CLR_HIGH for v in plot_df["SHAP"]]
+        colors  = [CLR_LOW if v < 0 else CLR_HIGH for v in plot_df["SHAP"]]
 
         fig, ax = plt.subplots(figsize=(7, 5))
-        ax.barh(plot_df["Variable"], plot_df["SHAP"], color=colors)
-        ax.axvline(0, color="black", lw=1)
-        ax.set_title("Top contributions individuelles")
-        ax.set_xlabel("Valeur SHAP")
+        fig.patch.set_facecolor("#ffffff")
+        ax.set_facecolor("#ffffff")
+        ax.barh(plot_df["Variable"], plot_df["SHAP"], color=colors, edgecolor="none", height=0.6)
+        ax.axvline(0, color="#667085", lw=0.8, linestyle="--")
+        ax.set_title("Individual SHAP Contributions", fontsize=11, fontweight="bold", pad=10)
+        ax.set_xlabel("SHAP Value", fontsize=9)
+        ax.tick_params(labelsize=8)
         sns.despine(ax=ax)
         plt.tight_layout()
         st.pyplot(fig)
         plt.close()
 
-    recs = generate_retention_recommendations(X_row.iloc[0], shap_df)
+    # ── Retention recommendations ──────────────────────────────
+    st.markdown('<hr class="divider">', unsafe_allow_html=True)
+    section_title("Retention Recommendations")
 
-    st.markdown('<div class="section-title">Recommandations de rétention</div>', unsafe_allow_html=True)
+    recs = generate_retention_recommendations(X_row.iloc[0], shap_df)
     for i, rec in enumerate(recs, 1):
         st.markdown(
             f"""
             <div class="action-card">
-                <div style="font-weight:700; margin-bottom:0.3rem; color:#101828;">Action {i}</div>
-                <div style="color:#101828;">{rec}</div>
+                <div style="font-weight:700; font-size:0.85rem; color:#1565C0;
+                            margin-bottom:0.3rem; text-transform:uppercase;
+                            letter-spacing:0.04em;">Action {i}</div>
+                <div style="color:#101828; line-height:1.6;">{rec}</div>
             </div>
             """,
             unsafe_allow_html=True,
         )
 
-    with st.expander("Voir l'explication SHAP détaillée"):
+    # ── Detailed SHAP waterfall ────────────────────────────────
+    with st.expander("View Detailed SHAP Waterfall"):
         try:
             exp = shap.Explanation(
                 values=sv_row,
@@ -679,7 +792,7 @@ def render_analysis_tab(results: dict, X_row: pd.DataFrame):
             st.pyplot(fig)
             plt.close()
         except Exception as e:
-            st.warning(f"Waterfall SHAP indisponible : {e}")
+            st.warning(f"SHAP waterfall plot unavailable: {e}")
 
 
 # ─────────────────────────────────────────────
@@ -688,23 +801,29 @@ def render_analysis_tab(results: dict, X_row: pd.DataFrame):
 
 def main():
     if not os.path.exists(DATA_PATH):
-        st.error("HRDataset_v14.csv introuvable.")
+        st.error("HRDataset_v14.csv was not found in the working directory.")
         return
 
     if not os.path.exists(os.path.join(MODELS_DIR, "best_model.pkl")):
-        st.error("Artefacts du modèle introuvables. Lancez d'abord hr_pipeline.py.")
+        st.error(
+            "Model artifacts not found. "
+            "Run hr_pipeline.py first to train and save the models."
+        )
         return
 
     _, feature_names, results = load_artifacts()
-    meta_df, X_full, _ = load_and_prepare_data(tuple(feature_names))
+    meta_df, X_full, _        = load_and_prepare_data(tuple(feature_names))
 
     render_header(results)
+    st.markdown("---")
 
     selected_idx = render_employee_selector(meta_df)
-    meta_row = meta_df.loc[selected_idx]
-    X_row = X_full.loc[[selected_idx]]
+    meta_row     = meta_df.loc[selected_idx]
+    X_row        = X_full.loc[[selected_idx]]
 
-    tab1, tab2 = st.tabs(["Profil employé", "Analyse IA"])
+    st.markdown("---")
+
+    tab1, tab2 = st.tabs(["Employee Profile", "AI Analysis"])
 
     with tab1:
         render_profile_tab(meta_row)
