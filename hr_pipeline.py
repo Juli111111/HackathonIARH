@@ -122,7 +122,6 @@ def preprocess(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
     print("\n" + "=" * 60)
     print(" ÉTAPE 2 — NETTOYAGE ET PRÉPARATION (RGPD)")
     print("=" * 60)
-
     df = df.copy()
 
     for col in df.select_dtypes(include="object").columns:
@@ -369,12 +368,41 @@ def enrich_with_nlp(X: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
 # ÉTAPE 3 — FEATURE ENGINEERING
 # ─────────────────────────────────────────────
 
-def feature_engineering(X: pd.DataFrame, y: pd.Series) -> pd.DataFrame:
+def feature_engineering(X: pd.DataFrame, y: pd.Series) -> tuple[pd.DataFrame, pd.Series]:
     print("\n" + "=" * 60)
     print(" ÉTAPE 3 — FEATURE ENGINEERING")
     print("=" * 60)
 
     X = X.copy()
+    y = y.copy()
+    
+    initial_shape = X.shape[0]
+
+    # Filtre d'âge valide (17-70 ans)
+    if "Age" in X.columns:
+        age_valid = (X["Age"] >= 17) & (X["Age"] <= 70)
+        n_age_removed = (~age_valid).sum()
+        if n_age_removed > 0:
+            print(f"\n► Suppression données d'âge aberrant : {n_age_removed} lignes (âge < 17 ou > 70)")
+            X = X[age_valid]
+            y = y[age_valid]
+
+    # Détection et suppression des salaires aberrants (Z-score)
+    if "Salary" in X.columns:
+        X["Salary"] = pd.to_numeric(X["Salary"], errors="coerce")
+        salary_mean = X["Salary"].mean()
+        salary_std = X["Salary"].std()
+        salary_zscore = np.abs((X["Salary"] - salary_mean) / (salary_std + 1e-8))
+        
+        salary_anomalies = salary_zscore > 3
+        n_salary_removed = salary_anomalies.sum()
+        if n_salary_removed > 0:
+            print(f"► Suppression données de salaire aberrant : {n_salary_removed} lignes (|Z-score| > 3)")
+            print(f"  Salaire moyen : ${salary_mean:,.0f} | Écart-type : ${salary_std:,.0f}")
+            X = X[~salary_anomalies]
+            y = y[~salary_anomalies]
+
+    print(f"► Nettoyage QA : {initial_shape} → {X.shape[0]} lignes ({initial_shape - X.shape[0]} supprimées)")
 
     if "Absences" in X.columns and "Tenure" in X.columns:
         tenure_safe = X["Tenure"].clip(lower=1)
@@ -382,6 +410,18 @@ def feature_engineering(X: pd.DataFrame, y: pd.Series) -> pd.DataFrame:
 
     if "DaysLateLast30" in X.columns and "Absences" in X.columns:
         X["RiskScore_Engagement"] = X["DaysLateLast30"] * 2 + X["Absences"]
+
+    # Z-score d'absentéisme pour détecter les anomalies
+    if "AbsenteeismRate" in X.columns:
+        mean_rate = X["AbsenteeismRate"].mean()
+        std_rate = X["AbsenteeismRate"].std()
+        X["AbsenteeismRate_ZScore"] = (X["AbsenteeismRate"] - mean_rate) / (std_rate + 1e-8)
+        X["IsAnomalousAbsenteeism"] = (np.abs(X["AbsenteeismRate_ZScore"]) > 2).astype(int)
+        
+        print(f"\n► Statistiques d'absentéisme :")
+        print(f"  Moyenne (AbsenteeismRate) : {mean_rate:.4f}")
+        print(f"  Écart-type : {std_rate:.4f}")
+        print(f"  Anomalies détectées (|z| > 2) : {X['IsAnomalousAbsenteeism'].sum()} ({X['IsAnomalousAbsenteeism'].sum()/len(X)*100:.1f}%)")
 
     corr_df = X.copy()
     corr_df["Termd"] = y.values
@@ -396,7 +436,7 @@ def feature_engineering(X: pd.DataFrame, y: pd.Series) -> pd.DataFrame:
         "Salary", "Age", "Tenure", "EngagementSurvey",
         "EmpSatisfaction", "Absences", "DaysLateLast30",
         "SpecialProjectsCount", "PerfScoreID", "AbsenteeismRate",
-        "RiskScore_Engagement", "text_sentiment_score", "salary_pct",
+        "AbsenteeismRate_ZScore", "RiskScore_Engagement", "text_sentiment_score", "salary_pct",
         "ManagerID"
     ] if c in X.columns]
 
@@ -414,8 +454,40 @@ def feature_engineering(X: pd.DataFrame, y: pd.Series) -> pd.DataFrame:
     plt.savefig(f"{PLOTS_DIR}/04_correlation_heatmap.png", dpi=150)
     plt.close()
 
+    # Visualisation des anomalies d'absentéisme (Z-score)
+    if "AbsenteeismRate_ZScore" in X.columns:
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+        
+        # Histogramme des Z-scores
+        axes[0].hist(X["AbsenteeismRate_ZScore"], bins=30, color="#2196F3", alpha=0.7, edgecolor="black")
+        axes[0].axvline(-2, color="red", linestyle="--", linewidth=2, label="Seuils anomalie (|z| > 2)")
+        axes[0].axvline(2, color="red", linestyle="--", linewidth=2)
+        axes[0].axvline(0, color="green", linestyle="-", linewidth=1.5, label="Moyenne")
+        axes[0].set_xlabel("Z-Score d'absentéisme")
+        axes[0].set_ylabel("Nombre d'employés")
+        axes[0].set_title("Distribution des Z-Scores d'absentéisme")
+        axes[0].legend()
+        
+        # Boxplot : Z-score vs Départ
+        sns.boxplot(
+            data=X.assign(Termd=y.values), 
+            x="Termd", 
+            y="AbsenteeismRate_ZScore",
+            palette=["#2196F3", "#F44336"], 
+            ax=axes[1]
+        )
+        axes[1].axhline(-2, color="red", linestyle="--", alpha=0.5)
+        axes[1].axhline(2, color="red", linestyle="--", alpha=0.5)
+        axes[1].set_xticklabels(["Actif", "Démissionné"])
+        axes[1].set_title("Z-Score d'absentéisme vs. Départ")
+        axes[1].set_ylabel("Z-Score")
+        
+        plt.tight_layout()
+        plt.savefig(f"{PLOTS_DIR}/05_absenteeism_anomalies.png", dpi=150)
+        plt.close()
+
     print(f"\n► {len(X.columns)} features après feature engineering")
-    return X
+    return X, y
 
 # ─────────────────────────────────────────────
 # ÉTAPES 4 & 5 — MODÈLES ML
@@ -770,7 +842,7 @@ def run_pipeline():
     X, demo_text_df = enrich_with_nlp(X)
     demo_text_df.to_csv("demo_text_examples.csv", index=False)
 
-    X = feature_engineering(X, y)
+    X, y = feature_engineering(X, y)
 
     results = train_and_evaluate(X, y)
 
